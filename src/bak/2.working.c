@@ -1,12 +1,9 @@
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
-#include <libavutil/imgutils.h>
+#include <libavutil/imgutils.h> // Added for av_image_get_buffer_size and av_image_fill_arrays
 #include <libswscale/swscale.h>
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h> // For usleep
 
 typedef struct {
         uint8_t *data; // RGB data
@@ -99,7 +96,7 @@ int main(int argc, char *argv[]) {
         // Allocate frame and packet
         AVFrame *frame = av_frame_alloc();
         AVFrame *rgb_frame = av_frame_alloc();
-        AVPacket *packet = av_packet_alloc();
+        AVPacket *packet = av_packet_alloc(); // Modern packet allocation
         if (!frame || !rgb_frame || !packet) {
                 fprintf(stderr, "Memory allocation failed\n");
                 av_frame_free(&frame);
@@ -138,12 +135,16 @@ int main(int argc, char *argv[]) {
 
         while (av_read_frame(fmt_ctx, packet) >= 0) {
                 if (packet->stream_index == video_stream_idx) {
+                        // Decode packet
                         if (avcodec_send_packet(codec_ctx, packet) >= 0) {
                                 while (avcodec_receive_frame(codec_ctx, frame) >= 0) {
+                                        // Check if this frame is at the desired time (30 FPS)
                                         if (frame->pts >= next_pts) {
+                                                // Convert to RGB
                                                 sws_scale(sws_ctx, (const uint8_t * const *)frame->data, frame->linesize, 0, codec_ctx->height,
                                                           rgb_frame->data, rgb_frame->linesize);
 
+                                                // Store in memory
                                                 Image *img = &images[image_count];
                                                 img->width = codec_ctx->width;
                                                 img->height = codec_ctx->height;
@@ -156,6 +157,7 @@ int main(int argc, char *argv[]) {
                                                 memcpy(img->data, rgb_buffer, rgb_size);
                                                 image_count++;
 
+                                                // Update next PTS for 30 FPS
                                                 next_pts += frame_duration;
                                                 dump_img(img);
                                         }
@@ -165,67 +167,12 @@ int main(int argc, char *argv[]) {
                 av_packet_unref(packet);
         }
 
+        // Print summary
         printf("Extracted %d frames at %dx%d (RGB)\n", image_count, codec_ctx->width, codec_ctx->height);
 
-        // Initialize X11
-        Display *display = XOpenDisplay(NULL);
-        if (!display) {
-                fprintf(stderr, "Cannot open X display\n");
-                for (int i = 0; i < image_count; i++) free(images[i].data);
-                free(images);
-                av_free(rgb_buffer);
-                av_frame_free(&frame);
-                av_frame_free(&rgb_frame);
-                av_packet_free(&packet);
-                sws_freeContext(sws_ctx);
-                avcodec_free_context(&codec_ctx);
-                avformat_close_input(&fmt_ctx);
-                return -1;
-        }
-
-        int screen = DefaultScreen(display);
-        Window root = RootWindow(display, screen);
-        Visual *visual = DefaultVisual(display, screen);
-        int depth = DefaultDepth(display, screen);
-
-        // Loop through images and set as background
+        // Cleanup
         for (int i = 0; i < image_count; i++) {
-                Image *img = &images[i];
-
-                // Create XImage
-                XImage *ximage = XCreateImage(display, visual, depth, ZPixmap, 0, (char *)img->data,
-                                              img->width, img->height, 32, 0);
-                if (!ximage) {
-                        fprintf(stderr, "Failed to create XImage for frame %d\n", i);
-                        continue;
-                }
-
-                // Create pixmap
-                Pixmap pixmap = XCreatePixmap(display, root, img->width, img->height, depth);
-                GC gc = XCreateGC(display, pixmap, 0, NULL);
-                XPutImage(display, pixmap, gc, ximage, 0, 0, 0, 0, img->width, img->height);
-
-                // Set pixmap as root window background
-                XSetWindowBackgroundPixmap(display, root, pixmap);
-                XClearWindow(display, root);
-                XFlush(display);
-
-                // Free X11 resources for this frame
-                XFreeGC(display, gc);
-                XFreePixmap(display, pixmap);
-                XDestroyImage(ximage); // This also frees img->data if we set owns_data=1, so we must not free it later
-
-                // Sleep for 1/30th of a second (approximately 33333 microseconds)
-                usleep(33333);
-        }
-
-        // Cleanup X11
-        XCloseDisplay(display);
-
-        // Cleanup FFmpeg
-        for (int i = 0; i < image_count; i++) {
-                // Data already freed by XDestroyImage
-                images[i].data = NULL;
+                free(images[i].data);
         }
         free(images);
         av_free(rgb_buffer);

@@ -2,14 +2,12 @@
 
 module Build
 
-set_flag("-x");
+set_flag("-xe");
 
-let debug = false;
-try { debug = ("g", "ggdb", "d", "debug").contains(argv()[1]); }
+let cc = "cc";
+let cname = "-o main";
+let cflags = "$(pkg-config --cflags libavcodec libavformat libavutil libswscale imlib2 x11 xrandr) -ggdb -O0";
+let clibs = "$(pkg-config --libs libavcodec libavformat libavutil libswscale imlib2 x11 xrandr)";
+let cfiles = "*.c";
 
-if debug {
-    $"cc -ggdb -O0 -o main main.c -lX11 -lImlib2 -lXrandr -lXext -lavformat -lavcodec -lswscale -lavutil";
-} else {
-    $"cc -o main main.c -lX11 -lImlib2 -lXrandr -lXext -lavformat -lavcodec -lswscale -lavutil";
-}
-
+$f"{cc} {cflags} {cname} {cfiles} {clibs}";

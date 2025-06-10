@@ -4,7 +4,6 @@
 #include <libswscale/swscale.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
-#include <X11/extensions/Xrandr.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -16,14 +15,8 @@ typedef struct {
 } Image;
 
 int main(int argc, char *argv[]) {
-        if (argc < 3) {
-                fprintf(stderr, "Usage: %s <input.mp4> <monitor_index>\n", argv[0]);
-                return -1;
-        }
-
-        int monitor_index = atoi(argv[2]);
-        if (monitor_index < 0) {
-                fprintf(stderr, "Invalid monitor index\n");
+        if (argc < 2) {
+                fprintf(stderr, "Usage: %s <input.mp4>\n", argv[0]);
                 return -1;
         }
 
@@ -82,80 +75,14 @@ int main(int argc, char *argv[]) {
                 return -1;
         }
 
-        // Initialize X11
-        Display *display = XOpenDisplay(NULL);
-        if (!display) {
-                fprintf(stderr, "Cannot open X display\n");
-                avcodec_free_context(&codec_ctx);
-                avformat_close_input(&fmt_ctx);
-                return -1;
-        }
-
-        int screen = DefaultScreen(display);
-        Window root = RootWindow(display, screen);
-        Visual *visual = DefaultVisual(display, screen);
-        int depth = DefaultDepth(display, screen);
-
-        // Get monitor information using XRandR
-        XRRScreenResources *screen_res = XRRGetScreenResources(display, root);
-        if (!screen_res) {
-                fprintf(stderr, "Failed to get screen resources\n");
-                XCloseDisplay(display);
-                avcodec_free_context(&codec_ctx);
-                avformat_close_input(&fmt_ctx);
-                return -1;
-        }
-
-        int num_monitors = screen_res->noutput;
-        if (monitor_index >= num_monitors) {
-                fprintf(stderr, "Monitor index %d out of range (0-%d)\n", monitor_index, num_monitors - 1);
-                XRRFreeScreenResources(screen_res);
-                XCloseDisplay(display);
-                avcodec_free_context(&codec_ctx);
-                avformat_close_input(&fmt_ctx);
-                return -1;
-        }
-
-        XRROutputInfo *output_info = XRRGetOutputInfo(display, screen_res, screen_res->outputs[monitor_index]);
-        if (!output_info || output_info->connection != RR_Connected) {
-                fprintf(stderr, "Monitor %d is not connected\n", monitor_index);
-                if (output_info) XRRFreeOutputInfo(output_info);
-                XRRFreeScreenResources(screen_res);
-                XCloseDisplay(display);
-                avcodec_free_context(&codec_ctx);
-                avformat_close_input(&fmt_ctx);
-                return -1;
-        }
-
-        XRRCrtcInfo *crtc_info = XRRGetCrtcInfo(display, screen_res, output_info->crtc);
-        if (!crtc_info) {
-                fprintf(stderr, "Failed to get CRTC info for monitor %d\n", monitor_index);
-                XRRFreeOutputInfo(output_info);
-                XRRFreeScreenResources(screen_res);
-                XCloseDisplay(display);
-                avcodec_free_context(&codec_ctx);
-                avformat_close_input(&fmt_ctx);
-                return -1;
-        }
-
-        int monitor_x = crtc_info->x;
-        int monitor_y = crtc_info->y;
-        int monitor_width = crtc_info->width;
-        int monitor_height = crtc_info->height;
-        printf("Monitor %d: %dx%d at (%d,%d)\n", monitor_index, monitor_width, monitor_height, monitor_x, monitor_y);
-
-        // Initialize scaling context for RGBA conversion, scaled to monitor size
+        // Initialize scaling context for RGBA conversion
         struct SwsContext *sws_ctx = sws_getContext(
                                                     codec_ctx->width, codec_ctx->height, codec_ctx->pix_fmt,
-                                                    monitor_width, monitor_height, AV_PIX_FMT_RGBA,
+                                                    codec_ctx->width, codec_ctx->height, AV_PIX_FMT_RGBA,
                                                     SWS_BILINEAR, NULL, NULL, NULL
                                                     );
         if (!sws_ctx) {
                 fprintf(stderr, "Could not initialize swscale context\n");
-                XRRFreeCrtcInfo(crtc_info);
-                XRRFreeOutputInfo(output_info);
-                XRRFreeScreenResources(screen_res);
-                XCloseDisplay(display);
                 avcodec_free_context(&codec_ctx);
                 avformat_close_input(&fmt_ctx);
                 return -1;
@@ -171,17 +98,13 @@ int main(int argc, char *argv[]) {
                 av_frame_free(&rgba_frame);
                 av_packet_free(&packet);
                 sws_freeContext(sws_ctx);
-                XRRFreeCrtcInfo(crtc_info);
-                XRRFreeOutputInfo(output_info);
-                XRRFreeScreenResources(screen_res);
-                XCloseDisplay(display);
                 avcodec_free_context(&codec_ctx);
                 avformat_close_input(&fmt_ctx);
                 return -1;
         }
 
-        // Allocate RGBA buffer for monitor size
-        int rgba_size = av_image_get_buffer_size(AV_PIX_FMT_RGBA, monitor_width, monitor_height, 1);
+        // Allocate RGBA buffer
+        int rgba_size = av_image_get_buffer_size(AV_PIX_FMT_RGBA, codec_ctx->width, codec_ctx->height, 1);
         uint8_t *rgba_buffer = av_malloc(rgba_size * sizeof(uint8_t));
         if (!rgba_buffer) {
                 fprintf(stderr, "Failed to allocate RGBA buffer\n");
@@ -189,15 +112,11 @@ int main(int argc, char *argv[]) {
                 av_frame_free(&rgba_frame);
                 av_packet_free(&packet);
                 sws_freeContext(sws_ctx);
-                XRRFreeCrtcInfo(crtc_info);
-                XRRFreeOutputInfo(output_info);
-                XRRFreeScreenResources(screen_res);
-                XCloseDisplay(display);
                 avcodec_free_context(&codec_ctx);
                 avformat_close_input(&fmt_ctx);
                 return -1;
         }
-        av_image_fill_arrays(rgba_frame->data, rgba_frame->linesize, rgba_buffer, AV_PIX_FMT_RGBA, monitor_width, monitor_height, 1);
+        av_image_fill_arrays(rgba_frame->data, rgba_frame->linesize, rgba_buffer, AV_PIX_FMT_RGBA, codec_ctx->width, codec_ctx->height, 1);
 
         // Calculate frame interval for 30 FPS
         double frame_interval = 1.0 / 30.0;
@@ -218,8 +137,8 @@ int main(int argc, char *argv[]) {
                                                           rgba_frame->data, rgba_frame->linesize);
 
                                                 Image *img = &images[image_count];
-                                                img->width = monitor_width;
-                                                img->height = monitor_height;
+                                                img->width = codec_ctx->width;
+                                                img->height = codec_ctx->height;
                                                 img->size = rgba_size;
                                                 img->data = malloc(rgba_size);
                                                 if (!img->data) {
@@ -230,7 +149,6 @@ int main(int argc, char *argv[]) {
                                                 image_count++;
 
                                                 next_pts += frame_duration;
-                                                printf("Image from frame created: %p\n", img);
                                         }
                                 }
                         }
@@ -238,7 +156,28 @@ int main(int argc, char *argv[]) {
                 av_packet_unref(packet);
         }
 
-        printf("Extracted %d frames at %dx%d (RGBA)\n", image_count, monitor_width, monitor_height);
+        printf("Extracted %d frames at %dx%d (RGBA)\n", image_count, codec_ctx->width, codec_ctx->height);
+
+        // Initialize X11
+        Display *display = XOpenDisplay(NULL);
+        if (!display) {
+                fprintf(stderr, "Cannot open X display\n");
+                for (int i = 0; i < image_count; i++) free(images[i].data);
+                free(images);
+                av_free(rgba_buffer);
+                av_frame_free(&frame);
+                av_frame_free(&rgba_frame);
+                av_packet_free(&packet);
+                sws_freeContext(sws_ctx);
+                avcodec_free_context(&codec_ctx);
+                avformat_close_input(&fmt_ctx);
+                return -1;
+        }
+
+        int screen = DefaultScreen(display);
+        Window root = RootWindow(display, screen);
+        Visual *visual = DefaultVisual(display, screen);
+        int depth = DefaultDepth(display, screen);
 
         // Debug visual information
         printf("Screen depth: %d, Visual class: %d (TrueColor=%d), Byte order: %s\n",
@@ -247,6 +186,7 @@ int main(int argc, char *argv[]) {
         // Ensure visual is TrueColor
         if (visual->class != TrueColor) {
                 fprintf(stderr, "Unsupported visual: not TrueColor\n");
+                XCloseDisplay(display);
                 for (int i = 0; i < image_count; i++) free(images[i].data);
                 free(images);
                 av_free(rgba_buffer);
@@ -254,26 +194,18 @@ int main(int argc, char *argv[]) {
                 av_frame_free(&rgba_frame);
                 av_packet_free(&packet);
                 sws_freeContext(sws_ctx);
-                XRRFreeCrtcInfo(crtc_info);
-                XRRFreeOutputInfo(output_info);
-                XRRFreeScreenResources(screen_res);
-                XCloseDisplay(display);
                 avcodec_free_context(&codec_ctx);
                 avformat_close_input(&fmt_ctx);
                 return -1;
         }
 
-        // Create a pixmap for the entire root window to preserve other monitors
-        Pixmap root_pixmap = XCreatePixmap(display, root, DisplayWidth(display, screen), DisplayHeight(display, screen), depth);
-        GC root_gc = XCreateGC(display, root_pixmap, 0, NULL);
-        XFillRectangle(display, root_pixmap, root_gc, 0, 0, DisplayWidth(display, screen), DisplayHeight(display, screen)); // Clear
-
+        // Loop through images and set as background
+        //for (int i = 0; i < image_count; i++) {
         int i = 0;
         while (1) {
                 Image *img = &images[i];
                 if (!img->data) {
                         fprintf(stderr, "Null image data for frame %d\n", i);
-                        i = (i + 1) % image_count;
                         continue;
                 }
 
@@ -283,17 +215,17 @@ int main(int argc, char *argv[]) {
                 if (!ximage) {
                         fprintf(stderr, "Failed to create XImage for frame %d (width=%d, height=%d, depth=%d)\n",
                                 i, img->width, img->height, depth);
-                        i = (i + 1) % image_count;
                         continue;
                 }
+
+                // Set byte order to match X server
                 ximage->byte_order = ImageByteOrder(display);
 
-                // Create pixmap for the monitor
+                // Create pixmap
                 Pixmap pixmap = XCreatePixmap(display, root, img->width, img->height, depth);
                 if (!pixmap) {
                         fprintf(stderr, "Failed to create pixmap for frame %d\n", i);
                         XDestroyImage(ximage);
-                        i = (i + 1) % image_count;
                         continue;
                 }
 
@@ -303,7 +235,6 @@ int main(int argc, char *argv[]) {
                         fprintf(stderr, "Failed to create GC for frame %d\n", i);
                         XFreePixmap(display, pixmap);
                         XDestroyImage(ximage);
-                        i = (i + 1) % image_count;
                         continue;
                 }
 
@@ -313,34 +244,31 @@ int main(int argc, char *argv[]) {
                         XFreeGC(display, gc);
                         XFreePixmap(display, pixmap);
                         XDestroyImage(ximage);
-                        i = (i + 1) % image_count;
                         continue;
                 }
 
-                // Copy monitor pixmap to root pixmap at monitor coordinates
-                XCopyArea(display, pixmap, root_pixmap, root_gc, 0, 0, img->width, img->height, monitor_x, monitor_y);
-
-                // Set root pixmap as background
-                XSetWindowBackgroundPixmap(display, root, root_pixmap);
+                // Set pixmap as root window background
+                XSetWindowBackgroundPixmap(display, root, pixmap);
                 XClearWindow(display, root);
                 XFlush(display);
 
                 // Free resources
                 XFreeGC(display, gc);
                 XFreePixmap(display, pixmap);
-                //XDestroyImage(ximage);
+                //XDestroyImage(ximage); // Frees img->data
                 //img->data = NULL;
 
+                // Sleep for ~1/30th second
                 usleep(33333);
-                i = (i + 1) % image_count;
+                i = (i+1) % image_count;
         }
 
         // Cleanup
-        XFreeGC(display, root_gc);
-        XFreePixmap(display, root_pixmap);
         XCloseDisplay(display);
         for (int i = 0; i < image_count; i++) {
-                if (images[i].data) free(images[i].data);
+                if (images[i].data) {
+                        free(images[i].data);
+                }
         }
         free(images);
         av_free(rgba_buffer);
@@ -348,9 +276,6 @@ int main(int argc, char *argv[]) {
         av_frame_free(&rgba_frame);
         av_packet_free(&packet);
         sws_freeContext(sws_ctx);
-        XRRFreeCrtcInfo(crtc_info);
-        XRRFreeOutputInfo(output_info);
-        XRRFreeScreenResources(screen_res);
         avcodec_free_context(&codec_ctx);
         avformat_close_input(&fmt_ctx);
 
