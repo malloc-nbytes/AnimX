@@ -30,7 +30,7 @@ typedef struct {
         XRROutputInfo **output_infos; // Array for multiple monitors
         XRRCrtcInfo **crtc_infos; // Array for multiple monitors
         int num_monitors; // Number of monitors when index is -1
-        long monitor_x, monitor_y, monitor_width, monitor_height; // Long to avoid overflow
+        long monitor_x, monitor_y, monitor_width, monitor_height; // Use long to avoid overflow
         Pixmap root_pixmap;
         GC root_gc;
         Atom xrootpmap_id, esetroot_pmap_id;
@@ -62,7 +62,7 @@ typedef struct {
         int done; // Flag to signal threads to exit
 } ThreadData;
 
-// Current time in microseconds
+// Helper function to get current time in microseconds
 long get_time_us() {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -100,11 +100,11 @@ int get_video_stream_index(AVFormatContext *fmt_ctx) {
 }
 
 AVCodec *find_codec_decoder(
-        AVFormatContext *fmt_ctx,
-        int video_stream_idx,
-        AVCodecContext **codec_ctx,
-        AVCodecParameters **codec_par
-) {
+                            AVFormatContext *fmt_ctx,
+                            int video_stream_idx,
+                            AVCodecContext **codec_ctx,
+                            AVCodecParameters **codec_par
+                            ) {
         *codec_par = fmt_ctx->streams[video_stream_idx]->codecpar;
         const AVCodec *codec = avcodec_find_decoder((*codec_par)->codec_id);
         if (!codec) {
@@ -695,12 +695,13 @@ int main(int argc, char *argv[]) {
         }
 
         int monitor_index = atoi(argv[2]);
-        // -1 for combined monitors
+        // Allow -1 for combined monitors
         if (monitor_index < -1) {
                 fprintf(stderr, "Invalid monitor index\n");
                 return -1;
         }
 
+        // Parse mode
         char *mode_str = strstr(argv[3], "--mode=");
         if (!mode_str || strlen(mode_str) <= 7) {
                 fprintf(stderr, "Mode not specified, defaulting to stream\n");

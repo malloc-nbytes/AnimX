@@ -11,8 +11,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
-#include <pthread.h>
-#include <limits.h>
+#include <pthread.h> // Added for threading
 
 typedef struct {
         uint8_t *data; // BGRA data
@@ -27,10 +26,9 @@ typedef struct {
         Visual *visual;
         int depth;
         XRRScreenResources *screen_res;
-        XRROutputInfo **output_infos; // Array for multiple monitors
-        XRRCrtcInfo **crtc_infos; // Array for multiple monitors
-        int num_monitors; // Number of monitors when index is -1
-        long monitor_x, monitor_y, monitor_width, monitor_height; // Long to avoid overflow
+        XRROutputInfo *output_info;
+        XRRCrtcInfo *crtc_info;
+        int monitor_x, monitor_y, monitor_width, monitor_height;
         Pixmap root_pixmap;
         GC root_gc;
         Atom xrootpmap_id, esetroot_pmap_id;
@@ -62,7 +60,7 @@ typedef struct {
         int done; // Flag to signal threads to exit
 } ThreadData;
 
-// Current time in microseconds
+// Helper function to get current time in microseconds
 long get_time_us() {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -100,11 +98,11 @@ int get_video_stream_index(AVFormatContext *fmt_ctx) {
 }
 
 AVCodec *find_codec_decoder(
-        AVFormatContext *fmt_ctx,
-        int video_stream_idx,
-        AVCodecContext **codec_ctx,
-        AVCodecParameters **codec_par
-) {
+                            AVFormatContext *fmt_ctx,
+                            int video_stream_idx,
+                            AVCodecContext **codec_ctx,
+                            AVCodecParameters **codec_par
+                            ) {
         *codec_par = fmt_ctx->streams[video_stream_idx]->codecpar;
         const AVCodec *codec = avcodec_find_decoder((*codec_par)->codec_id);
         if (!codec) {
@@ -151,137 +149,29 @@ int init_context(Context *ctx, int monitor_index, const char *video_mp4) {
                 return -1;
         }
 
-        if (monitor_index == -1) {
-                // Combine all connected monitors
-                int num_outputs = ctx->screen_res->noutput;
-                int connected_count = 0;
-
-                // First pass: count connected monitors with valid CRTCs
-                for (int i = 0; i < num_outputs; i++) {
-                        XRROutputInfo *output_info = XRRGetOutputInfo(ctx->display, ctx->screen_res, ctx->screen_res->outputs[i]);
-                        if (output_info && output_info->connection == RR_Connected && output_info->crtc) {
-                                XRRCrtcInfo *crtc_info = XRRGetCrtcInfo(ctx->display, ctx->screen_res, output_info->crtc);
-                                if (crtc_info && crtc_info->width > 0 && crtc_info->height > 0) {
-                                        connected_count++;
-                                }
-                                if (crtc_info) XRRFreeCrtcInfo(crtc_info);
-                        }
-                        if (output_info) XRRFreeOutputInfo(output_info);
-                }
-
-                if (connected_count == 0) {
-                        fprintf(stderr, "No connected monitors with valid CRTCs found\n");
-                        return -1;
-                }
-
-                // Allocate arrays for connected monitors
-                ctx->output_infos = malloc(connected_count * sizeof(XRROutputInfo *));
-                ctx->crtc_infos = malloc(connected_count * sizeof(XRRCrtcInfo *));
-                if (!ctx->output_infos || !ctx->crtc_infos) {
-                        fprintf(stderr, "Failed to allocate monitor info arrays\n");
-                        if (ctx->output_infos) free(ctx->output_infos);
-                        if (ctx->crtc_infos) free(ctx->crtc_infos);
-                        return -1;
-                }
-                ctx->num_monitors = connected_count;
-
-                // Second pass: collect connected monitor info and compute bounding rectangle
-                int idx = 0;
-                long min_x = LONG_MAX, min_y = LONG_MAX;
-                long max_x = LONG_MIN, max_y = LONG_MIN;
-
-                for (int i = 0; i < num_outputs && idx < connected_count; i++) {
-                        XRROutputInfo *output_info = XRRGetOutputInfo(ctx->display, ctx->screen_res, ctx->screen_res->outputs[i]);
-                        if (output_info && output_info->connection == RR_Connected && output_info->crtc) {
-                                XRRCrtcInfo *crtc_info = XRRGetCrtcInfo(ctx->display, ctx->screen_res, output_info->crtc);
-                                if (crtc_info && crtc_info->width > 0 && crtc_info->height > 0) {
-                                        ctx->output_infos[idx] = output_info;
-                                        ctx->crtc_infos[idx] = crtc_info;
-                                        printf("Monitor %d: %dx%d at (%ld,%ld)\n", idx, crtc_info->width, crtc_info->height, (long)crtc_info->x, (long)crtc_info->y);
-                                        // Update bounding rectangle
-                                        if (crtc_info->x < min_x) min_x = crtc_info->x;
-                                        if (crtc_info->y < min_y) min_y = crtc_info->y;
-                                        if ((long)crtc_info->x + crtc_info->width > max_x) max_x = (long)crtc_info->x + crtc_info->width;
-                                        if ((long)crtc_info->y + crtc_info->height > max_y) max_y = (long)crtc_info->y + crtc_info->height;
-                                        idx++;
-                                } else {
-                                        if (crtc_info) XRRFreeCrtcInfo(crtc_info);
-                                        if (output_info) XRRFreeOutputInfo(output_info);
-                                }
-                        } else if (output_info) {
-                                XRRFreeOutputInfo(output_info);
-                        }
-                }
-
-                if (idx == 0) {
-                        fprintf(stderr, "No valid CRTCs found for connected monitors\n");
-                        free(ctx->output_infos);
-                        free(ctx->crtc_infos);
-                        return -1;
-                }
-
-                // Validate dimensions
-                long width = max_x - min_x;
-                long height = max_y - min_y;
-                if (width <= 0 || height <= 0 || width > INT_MAX || height > INT_MAX) {
-                        fprintf(stderr, "Invalid combined monitor dimensions: %ldx%ld\n", width, height);
-                        for (int i = 0; i < idx; i++) {
-                                if (ctx->crtc_infos[i]) XRRFreeCrtcInfo(ctx->crtc_infos[i]);
-                                if (ctx->output_infos[i]) XRRFreeOutputInfo(ctx->output_infos[i]);
-                        }
-                        free(ctx->output_infos);
-                        free(ctx->crtc_infos);
-                        return -1;
-                }
-
-                // Set combined monitor parameters
-                ctx->monitor_x = min_x;
-                ctx->monitor_y = min_y;
-                ctx->monitor_width = width;
-                ctx->monitor_height = height;
-                printf("Combined monitors: %ldx%ld at (%ld,%ld)\n", ctx->monitor_width, ctx->monitor_height, ctx->monitor_x, ctx->monitor_y);
-        } else {
-                // Single monitor
-                int num_monitors = ctx->screen_res->noutput;
-                if (monitor_index >= num_monitors) {
-                        fprintf(stderr, "Monitor index %d out of range (0-%d)\n", monitor_index, num_monitors - 1);
-                        return -1;
-                }
-
-                ctx->output_infos = malloc(sizeof(XRROutputInfo *));
-                ctx->crtc_infos = malloc(sizeof(XRRCrtcInfo *));
-                if (!ctx->output_infos || !ctx->crtc_infos) {
-                        fprintf(stderr, "Failed to allocate monitor info arrays\n");
-                        if (ctx->output_infos) free(ctx->output_infos);
-                        if (ctx->crtc_infos) free(ctx->crtc_infos);
-                        return -1;
-                }
-                ctx->num_monitors = 1;
-
-                ctx->output_infos[0] = XRRGetOutputInfo(ctx->display, ctx->screen_res, ctx->screen_res->outputs[monitor_index]);
-                if (!ctx->output_infos[0] || ctx->output_infos[0]->connection != RR_Connected) {
-                        fprintf(stderr, "Monitor %d is not connected\n", monitor_index);
-                        free(ctx->output_infos);
-                        free(ctx->crtc_infos);
-                        return -1;
-                }
-
-                ctx->crtc_infos[0] = XRRGetCrtcInfo(ctx->display, ctx->screen_res, ctx->output_infos[0]->crtc);
-                if (!ctx->crtc_infos[0] || ctx->crtc_infos[0]->width <= 0 || ctx->crtc_infos[0]->height <= 0) {
-                        fprintf(stderr, "Failed to get valid CRTC info for monitor %d\n", monitor_index);
-                        if (ctx->crtc_infos[0]) XRRFreeCrtcInfo(ctx->crtc_infos[0]);
-                        XRRFreeOutputInfo(ctx->output_infos[0]);
-                        free(ctx->output_infos);
-                        free(ctx->crtc_infos);
-                        return -1;
-                }
-
-                ctx->monitor_x = ctx->crtc_infos[0]->x;
-                ctx->monitor_y = ctx->crtc_infos[0]->y;
-                ctx->monitor_width = ctx->crtc_infos[0]->width;
-                ctx->monitor_height = ctx->crtc_infos[0]->height;
-                printf("Monitor %d: %ldx%ld at (%ld,%ld)\n", monitor_index, ctx->monitor_width, ctx->monitor_height, ctx->monitor_x, ctx->monitor_y);
+        int num_monitors = ctx->screen_res->noutput;
+        if (monitor_index >= num_monitors) {
+                fprintf(stderr, "Monitor index %d out of range (0-%d)\n", monitor_index, num_monitors - 1);
+                return -1;
         }
+
+        ctx->output_info = XRRGetOutputInfo(ctx->display, ctx->screen_res, ctx->screen_res->outputs[monitor_index]);
+        if (!ctx->output_info || ctx->output_info->connection != RR_Connected) {
+                fprintf(stderr, "Monitor %d is not connected\n", monitor_index);
+                return -1;
+        }
+
+        ctx->crtc_info = XRRGetCrtcInfo(ctx->display, ctx->screen_res, ctx->output_info->crtc);
+        if (!ctx->crtc_info) {
+                fprintf(stderr, "Failed to get CRTC info for monitor %d\n", monitor_index);
+                return -1;
+        }
+
+        ctx->monitor_x = ctx->crtc_info->x;
+        ctx->monitor_y = ctx->crtc_info->y;
+        ctx->monitor_width = ctx->crtc_info->width;
+        ctx->monitor_height = ctx->crtc_info->height;
+        printf("Monitor %d: %dx%d at (%d,%d)\n", monitor_index, ctx->monitor_width, ctx->monitor_height, ctx->monitor_x, ctx->monitor_y);
 
         ctx->sws_ctx = sws_getContext(ctx->codec_ctx->width, ctx->codec_ctx->height, ctx->codec_ctx->pix_fmt,
                                       ctx->monitor_width, ctx->monitor_height, AV_PIX_FMT_BGRA,
@@ -300,10 +190,6 @@ int init_context(Context *ctx, int monitor_index, const char *video_mp4) {
         }
 
         ctx->bgra_size = av_image_get_buffer_size(AV_PIX_FMT_BGRA, ctx->monitor_width, ctx->monitor_height, 1);
-        if (ctx->bgra_size <= 0) {
-                fprintf(stderr, "Invalid BGRA buffer size for %ldx%ld\n", ctx->monitor_width, ctx->monitor_height);
-                return -1;
-        }
         ctx->bgra_buffer = av_malloc(ctx->bgra_size * sizeof(uint8_t));
         if (!ctx->bgra_buffer) {
                 fprintf(stderr, "Failed to allocate BGRA buffer\n");
@@ -338,12 +224,8 @@ void cleanup_context(Context *ctx) {
         if (ctx->bgra_frame) av_frame_free(&ctx->bgra_frame);
         if (ctx->packet) av_packet_free(&ctx->packet);
         if (ctx->sws_ctx) sws_freeContext(ctx->sws_ctx);
-        for (int i = 0; i < ctx->num_monitors; i++) {
-                if (ctx->crtc_infos && ctx->crtc_infos[i]) XRRFreeCrtcInfo(ctx->crtc_infos[i]);
-                if (ctx->output_infos && ctx->output_infos[i]) XRRFreeOutputInfo(ctx->output_infos[i]);
-        }
-        if (ctx->crtc_infos) free(ctx->crtc_infos);
-        if (ctx->output_infos) free(ctx->output_infos);
+        if (ctx->crtc_info) XRRFreeCrtcInfo(ctx->crtc_info);
+        if (ctx->output_info) XRRFreeOutputInfo(ctx->output_info);
         if (ctx->screen_res) XRRFreeScreenResources(ctx->screen_res);
         if (ctx->display) XCloseDisplay(ctx->display);
         if (ctx->codec_ctx) avcodec_free_context(&ctx->codec_ctx);
@@ -454,7 +336,7 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         }
         printf("}\n");
 
-        printf("Loaded %d frames at %ldx%ld (BGRA)\n", image_count, ctx.monitor_width, ctx.monitor_height);
+        printf("Loaded %d frames at %dx%d (BGRA)\n", image_count, ctx.monitor_width, ctx.monitor_height);
         sleep(1);
 
         // Display loop
@@ -695,12 +577,12 @@ int main(int argc, char *argv[]) {
         }
 
         int monitor_index = atoi(argv[2]);
-        // -1 for combined monitors
-        if (monitor_index < -1) {
+        if (monitor_index < 0) {
                 fprintf(stderr, "Invalid monitor index\n");
                 return -1;
         }
 
+        // Parse mode
         char *mode_str = strstr(argv[3], "--mode=");
         if (!mode_str || strlen(mode_str) <= 7) {
                 fprintf(stderr, "Mode not specified, defaulting to stream\n");
