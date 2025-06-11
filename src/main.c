@@ -28,13 +28,17 @@ typedef enum {
 } Mode_Type;
 
 static struct {
+        uint32_t flags;
         const char *wp;
         int mon;
         Mode_Type mode;
+        double maxmem;
 } g_config = {
+        .flags = 0x00000000,
         .wp = NULL,
         .mon = -1,
         .mode = MODE_STREAM,
+        .maxmem = 0.f,
 };
 
 typedef struct {
@@ -131,7 +135,7 @@ int run_load_all(int monitor_index, const char *video_mp4) {
 
         // Allocate array for frames (assuming max 1000 frames)
         //Image *images = (Image *)malloc(1000 * sizeof(Image));
-        dyn_array(Image *, images);
+        dyn_array(Image, images);
         if (!images.data) {
                 fprintf(stderr, "Failed to allocate image array\n");
                 cleanup_context(&ctx);
@@ -144,28 +148,38 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         size_t loading_len = sizeof(loading)/sizeof(*loading);
         size_t loading_i = 0;
 
+        double mem_usage = 0;
+
         // Load all frames
         while (av_read_frame(ctx.fmt_ctx, ctx.packet) >= 0) {
                 if (ctx.packet->stream_index == ctx.video_stream_idx) {
                         if (avcodec_send_packet(ctx.codec_ctx, ctx.packet) >= 0) {
                                 while (avcodec_receive_frame(ctx.codec_ctx, ctx.frame) >= 0) {
                                         if (ctx.frame->pts >= next_pts) {
+                                                double GBs = mem_usage / (1024.0 * 1024.0 * 1024.0);
+
+                                                if ((g_config.flags & FT_MAXMEM) && GBs >= g_config.maxmem) {
+                                                        fflush(stdout);
+                                                        printf("maximum memory allowed (%f) has been exeeded, stopping image generation...\n", g_config.maxmem);
+                                                        goto done;
+                                                }
+
                                                 sws_scale(ctx.sws_ctx, (const uint8_t * const *)ctx.frame->data, ctx.frame->linesize, 0, ctx.codec_ctx->height,
                                                           ctx.bgra_frame->data, ctx.bgra_frame->linesize);
-                                                //Image *img = &images[image_count];
-                                                Image *img = (Image *)malloc(sizeof(Image));
-                                                img->width = ctx.monitor_width;
-                                                img->height = ctx.monitor_height;
-                                                img->size = ctx.bgra_size;
-                                                img->data = (uint8_t *)malloc(ctx.bgra_size);
-                                                if (!img->data) {
+                                                Image img = (Image){
+                                                        .width = ctx.monitor_width,
+                                                        .height = ctx.monitor_height,
+                                                        .data = (uint8_t *)malloc(ctx.bgra_size),
+                                                };
+                                                mem_usage += (double)ctx.bgra_size;
+                                                if (!img.data) {
                                                         fprintf(stderr, "Failed to allocate image data\n");
                                                         break;
                                                 }
-                                                memcpy(img->data, ctx.bgra_buffer, ctx.bgra_size);
+                                                memcpy(img.data, ctx.bgra_buffer, ctx.bgra_size);
                                                 image_count++;
                                                 next_pts += ctx.frame_duration;
-                                                printf("Loading Frames... [%d] %c\n", image_count, loading[loading_i]);
+                                                printf("Loading Frames... [%d], mem=%fGB %c\n", image_count, GBs, loading[loading_i]);
                                                 fflush(stdout);
                                                 printf("\033[A");
                                                 printf("\033[2K");
@@ -180,13 +194,14 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                 av_packet_unref(ctx.packet);
         }
 
+ done:
         printf("Loaded %d frames at %ldx%ld (BGRA)\n", image_count, ctx.monitor_width, ctx.monitor_height);
         sleep(1);
 
         // Display loop
         int i = 0;
         while (1) {
-                Image *img = images.data[i];
+                Image *img = &images.data[i];
                 if (!img->data) {
                         fprintf(stderr, "Null image data for frame %d\n", i);
                         i = (i + 1) % image_count;
@@ -217,7 +232,7 @@ int run_load_all(int monitor_index, const char *video_mp4) {
 
         // Cleanup
         for (int i = 0; i < image_count; i++) {
-                if (images.data[i]->data) free(images.data[i]->data);
+                if (images.data[i].data) free(images.data[i].data);
         }
         //free(images);
         dyn_array_free(images);
@@ -450,7 +465,7 @@ int main(int argc, char *argv[]) {
                                 err("--mon expects a value after equals (=)\n");
                         }
                         if (!str_isdigit(arg.eq)) {
-                                err_wargs("--mon expects a number, not %s`\n", arg.eq);
+                                err_wargs("--mon expects a number, not `%s`\n", arg.eq);
                         }
                         g_config.mon = atoi(arg.eq);
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_MODE)) {
@@ -464,7 +479,17 @@ int main(int argc, char *argv[]) {
                         } else {
                                 err_wargs("--mode expects either `stream` or `load`, not `%s`", arg.eq);
                         }
-                } else {
+                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_MAXMEM)) {
+                        if (!arg.eq) {
+                                err("--maxmem expects a value after equals (=)\n");
+                        }
+                        if (!str_isdigit(arg.eq)) {
+                                err_wargs("--maxmem expects a float, not `%s`\n", arg.eq);
+                        }
+                        g_config.maxmem = strtod(arg.eq, NULL);
+                        g_config.flags |= FT_MAXMEM;
+                }
+                else {
                         err_wargs("unknown option `%s`", arg.start);
                 }
         }
@@ -476,6 +501,9 @@ int main(int argc, char *argv[]) {
         printf("Wallpaper filepath: %s\n", g_config.wp);
         printf("Monitor: %d %s\n", g_config.mon, g_config.mon == -1 ? "[Stretch]" : "");
         printf("Mode: %s\n", g_config.mode == MODE_LOAD ? "load" : "stream");
+        if (g_config.flags & FT_MAXMEM) {
+                printf("Maximum Memory Allowed: %fGB\n", g_config.maxmem);
+        }
 
         if (g_config.mode == MODE_STREAM) {
                 return run_stream(g_config.mon, g_config.wp);
