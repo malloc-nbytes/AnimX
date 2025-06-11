@@ -438,10 +438,12 @@ int run_stream(int monitor_index, const char *video_mp4) {
 }
 
 void usage(void) {
-        printf("awx --wp=<path> [--mon=<integer>] [--mode=<load|stream>] [options...]\n");
+        printf("awx <walpaper_filepath> [options...]\n");
         printf("Options:\n");
-        printf("    %c, %s    display this message\n", FLAG_1HY_HELP, FLAG_2HY_HELP);
-        exit(0);
+        printf("    -%c, --%s[=<flag>|*]      display this message or get help on individual flags or all (*)\n", FLAG_1HY_HELP, FLAG_2HY_HELP);
+        printf("        --%s=<int>            set the display monitor or (-1) to combine all monitors into one single monitor\n", FLAG_2HY_MON);
+        printf("        --%s=<stream|load>   set the frame generation mode\n", FLAG_2HY_MODE);
+        printf("        --%s=<float>       set a maximum memory limit for --mode=load\n", FLAG_2HY_MAXMEM);
 }
 
 int main(int argc, char *argv[]) {
@@ -452,14 +454,19 @@ int main(int argc, char *argv[]) {
         Clap_Arg arg = {0};
         while (clap_next(&arg)) {
                 if (arg.hyphc == 1 && arg.start[0] == FLAG_1HY_HELP) {
-                        usage();
-                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_HELP)) {
-                        usage();
-                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_WP)) {
-                        if (!arg.eq) {
-                                err("--wp expects a value after equals (=)\n");
+                        if (arg.eq) {
+                                dump_flag_info(arg.eq);
+                        } else {
+                                usage();
                         }
-                        g_config.wp = strdup(arg.eq);
+                        exit(0);
+                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_HELP)) {
+                        if (arg.eq) {
+                                dump_flag_info(arg.eq);
+                        } else {
+                                usage();
+                        }
+                        exit(0);
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_MON)) {
                         if (!arg.eq) {
                                 err("--mon expects a value after equals (=)\n");
@@ -489,19 +496,27 @@ int main(int argc, char *argv[]) {
                         g_config.maxmem = strtod(arg.eq, NULL);
                         g_config.flags |= FT_MAXMEM;
                 }
-                else {
+                else if (arg.hyphc == 0) {
+                        if (g_config.wp) {
+                                err_wargs("only one wallpaper is allowed, already have: %s", g_config.wp);
+                        }
+                        g_config.wp = strdup(arg.start);
+                } else {
                         err_wargs("unknown option `%s`", arg.start);
                 }
         }
 
         if (!g_config.wp) {
-                err("Wallpaper filepath (--wp) is not set");
+                err("Wallpaper filepath is not set");
         }
 
         printf("Wallpaper filepath: %s\n", g_config.wp);
         printf("Monitor: %d %s\n", g_config.mon, g_config.mon == -1 ? "[Stretch]" : "");
         printf("Mode: %s\n", g_config.mode == MODE_LOAD ? "load" : "stream");
         if (g_config.flags & FT_MAXMEM) {
+                if (g_config.maxmem < 0) {
+                        err_wargs("The maximum memory you entered (%f) must be > 0.f", g_config.maxmem);
+                }
                 printf("Maximum Memory Allowed: %fGB\n", g_config.maxmem);
         }
 
