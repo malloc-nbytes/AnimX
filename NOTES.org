@@ -1,0 +1,4 @@
+libavcodec - https://www.ffmpeg.org/libavcodec.html
+libavformat - https://ffmpeg.org/libavformat.html
+libavutil - https://ffmpeg.org/libavutil.html
+libswscale - https://ffmpeg.org/libswscale.html

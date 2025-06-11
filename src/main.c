@@ -1,11 +1,3 @@
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libavutil/imgutils.h>
-#include <libswscale/swscale.h>
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <X11/extensions/Xrandr.h>
-#include <X11/Xatom.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,345 +6,69 @@
 #include <pthread.h>
 #include <limits.h>
 
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/imgutils.h>
+#include <libswscale/swscale.h>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <X11/extensions/Xrandr.h>
+#include <X11/Xatom.h>
+
+#include "context.h"
+#include "flag.h"
+#include "utils.h"
+#include "dyn_array.h"
+#define CLAP_IMPL
+#include "clap.h"
+
+typedef enum {
+        MODE_LOAD = 0,
+        MODE_STREAM,
+} Mode_Type;
+
+static struct {
+        const char *wp;
+        int mon;
+        Mode_Type mode;
+} g_config = {
+        .wp = NULL,
+        .mon = -1,
+        .mode = MODE_STREAM,
+};
+
 typedef struct {
         uint8_t *data; // BGRA data
         int width, height; // Frame dimensions
         int size; // Size of data (width * height * 4 for BGRA)
 } Image;
 
-typedef struct {
-        Display *display;
-        int screen;
-        Window root;
-        Visual *visual;
-        int depth;
-        XRRScreenResources *screen_res;
-        XRROutputInfo **output_infos; // Array for multiple monitors
-        XRRCrtcInfo **crtc_infos; // Array for multiple monitors
-        int num_monitors; // Number of monitors when index is -1
-        long monitor_x, monitor_y, monitor_width, monitor_height; // Long to avoid overflow
-        Pixmap root_pixmap;
-        GC root_gc;
-        Atom xrootpmap_id, esetroot_pmap_id;
-        AVFormatContext *fmt_ctx;
-        int video_stream_idx;
-        AVCodecContext *codec_ctx;
-        AVCodecParameters *codec_par;
-        struct SwsContext *sws_ctx;
-        AVFrame *frame, *bgra_frame;
-        AVPacket *packet;
-        uint8_t *bgra_buffer;
-        int bgra_size;
-        double frame_interval;
-        double video_time_base;
-        int64_t frame_duration;
-} Context;
-
 // Threading data for streaming mode
 typedef struct {
         Context *ctx;
-        Image *buffer; // Circular buffer for frames
+        Image *buffer;   // Circular buffer for frames
         int buffer_size; // Number of frames in buffer
-        int write_idx; // Where producer writes
-        int read_idx; // Where consumer reads
-        int count; // Number of frames in buffer
-        pthread_mutex_t mutex;
-        pthread_cond_t not_full;
-        pthread_cond_t not_empty;
-        int done; // Flag to signal threads to exit
-} ThreadData;
+        int write_idx;   // Where producer writes
+        int read_idx;    // Where consumer reads
+        int count;       // Number of frames in buffer
+        struct {
+                pthread_mutex_t mutex;
+                pthread_cond_t not_full;
+                pthread_cond_t not_empty;
+        } threading;
+        int done;        // Flag to signal threads to exit
+} Thread_Data;
 
 // Current time in microseconds
-long get_time_us() {
+long get_time_us(void) {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
         return ts.tv_sec * 1000000L + ts.tv_nsec / 1000L;
 }
 
-AVFormatContext *create_avformat_ctx(const char *video_fp) {
-        AVFormatContext *fmt_ctx = NULL;
-        if (avformat_open_input(&fmt_ctx, video_fp, NULL, NULL) < 0) {
-                fprintf(stderr, "Could not open video file\n");
-                exit(1);
-        }
-        if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
-                fprintf(stderr, "Could not find stream info\n");
-                avformat_close_input(&fmt_ctx);
-                exit(1);
-        }
-        return fmt_ctx;
-}
-
-int get_video_stream_index(AVFormatContext *fmt_ctx) {
-        int video_stream_idx = -1;
-        for (unsigned int i = 0; i < fmt_ctx->nb_streams; i++) {
-                if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-                        video_stream_idx = i;
-                        break;
-                }
-        }
-        if (video_stream_idx == -1) {
-                fprintf(stderr, "No video stream found\n");
-                avformat_close_input(&fmt_ctx);
-                exit(1);
-        }
-        return video_stream_idx;
-}
-
-AVCodec *find_codec_decoder(
-        AVFormatContext *fmt_ctx,
-        int video_stream_idx,
-        AVCodecContext **codec_ctx,
-        AVCodecParameters **codec_par
-) {
-        *codec_par = fmt_ctx->streams[video_stream_idx]->codecpar;
-        const AVCodec *codec = avcodec_find_decoder((*codec_par)->codec_id);
-        if (!codec) {
-                fprintf(stderr, "Decoder not found\n");
-                avformat_close_input(&fmt_ctx);
-                exit(1);
-        }
-        *codec_ctx = avcodec_alloc_context3(codec);
-        if (avcodec_parameters_to_context(*codec_ctx, *codec_par) < 0) {
-                fprintf(stderr, "Failed to copy codec parameters\n");
-                avformat_close_input(&fmt_ctx);
-                exit(1);
-        }
-        if (avcodec_open2(*codec_ctx, codec, NULL) < 0) {
-                fprintf(stderr, "Could not open codec\n");
-                avcodec_free_context(codec_ctx);
-                avformat_close_input(&fmt_ctx);
-                exit(1);
-        }
-        return (AVCodec *)codec;
-}
-
-// Initialize common resources
-int init_context(Context *ctx, int monitor_index, const char *video_mp4) {
-        avformat_network_init();
-        ctx->fmt_ctx = create_avformat_ctx(video_mp4);
-        ctx->video_stream_idx = get_video_stream_index(ctx->fmt_ctx);
-        find_codec_decoder(ctx->fmt_ctx, ctx->video_stream_idx, &ctx->codec_ctx, &ctx->codec_par);
-
-        ctx->display = XOpenDisplay(NULL);
-        if (!ctx->display) {
-                fprintf(stderr, "Cannot open X display\n");
-                return -1;
-        }
-
-        ctx->screen = DefaultScreen(ctx->display);
-        ctx->root = RootWindow(ctx->display, ctx->screen);
-        ctx->visual = DefaultVisual(ctx->display, ctx->screen);
-        ctx->depth = DefaultDepth(ctx->display, ctx->screen);
-
-        ctx->screen_res = XRRGetScreenResources(ctx->display, ctx->root);
-        if (!ctx->screen_res) {
-                fprintf(stderr, "Failed to get screen resources\n");
-                return -1;
-        }
-
-        if (monitor_index == -1) {
-                // Combine all connected monitors
-                int num_outputs = ctx->screen_res->noutput;
-                int connected_count = 0;
-
-                // First pass: count connected monitors with valid CRTCs
-                for (int i = 0; i < num_outputs; i++) {
-                        XRROutputInfo *output_info = XRRGetOutputInfo(ctx->display, ctx->screen_res, ctx->screen_res->outputs[i]);
-                        if (output_info && output_info->connection == RR_Connected && output_info->crtc) {
-                                XRRCrtcInfo *crtc_info = XRRGetCrtcInfo(ctx->display, ctx->screen_res, output_info->crtc);
-                                if (crtc_info && crtc_info->width > 0 && crtc_info->height > 0) {
-                                        connected_count++;
-                                }
-                                if (crtc_info) XRRFreeCrtcInfo(crtc_info);
-                        }
-                        if (output_info) XRRFreeOutputInfo(output_info);
-                }
-
-                if (connected_count == 0) {
-                        fprintf(stderr, "No connected monitors with valid CRTCs found\n");
-                        return -1;
-                }
-
-                // Allocate arrays for connected monitors
-                ctx->output_infos = malloc(connected_count * sizeof(XRROutputInfo *));
-                ctx->crtc_infos = malloc(connected_count * sizeof(XRRCrtcInfo *));
-                if (!ctx->output_infos || !ctx->crtc_infos) {
-                        fprintf(stderr, "Failed to allocate monitor info arrays\n");
-                        if (ctx->output_infos) free(ctx->output_infos);
-                        if (ctx->crtc_infos) free(ctx->crtc_infos);
-                        return -1;
-                }
-                ctx->num_monitors = connected_count;
-
-                // Second pass: collect connected monitor info and compute bounding rectangle
-                int idx = 0;
-                long min_x = LONG_MAX, min_y = LONG_MAX;
-                long max_x = LONG_MIN, max_y = LONG_MIN;
-
-                for (int i = 0; i < num_outputs && idx < connected_count; i++) {
-                        XRROutputInfo *output_info = XRRGetOutputInfo(ctx->display, ctx->screen_res, ctx->screen_res->outputs[i]);
-                        if (output_info && output_info->connection == RR_Connected && output_info->crtc) {
-                                XRRCrtcInfo *crtc_info = XRRGetCrtcInfo(ctx->display, ctx->screen_res, output_info->crtc);
-                                if (crtc_info && crtc_info->width > 0 && crtc_info->height > 0) {
-                                        ctx->output_infos[idx] = output_info;
-                                        ctx->crtc_infos[idx] = crtc_info;
-                                        printf("Monitor %d: %dx%d at (%ld,%ld)\n", idx, crtc_info->width, crtc_info->height, (long)crtc_info->x, (long)crtc_info->y);
-                                        // Update bounding rectangle
-                                        if (crtc_info->x < min_x) min_x = crtc_info->x;
-                                        if (crtc_info->y < min_y) min_y = crtc_info->y;
-                                        if ((long)crtc_info->x + crtc_info->width > max_x) max_x = (long)crtc_info->x + crtc_info->width;
-                                        if ((long)crtc_info->y + crtc_info->height > max_y) max_y = (long)crtc_info->y + crtc_info->height;
-                                        idx++;
-                                } else {
-                                        if (crtc_info) XRRFreeCrtcInfo(crtc_info);
-                                        if (output_info) XRRFreeOutputInfo(output_info);
-                                }
-                        } else if (output_info) {
-                                XRRFreeOutputInfo(output_info);
-                        }
-                }
-
-                if (idx == 0) {
-                        fprintf(stderr, "No valid CRTCs found for connected monitors\n");
-                        free(ctx->output_infos);
-                        free(ctx->crtc_infos);
-                        return -1;
-                }
-
-                // Validate dimensions
-                long width = max_x - min_x;
-                long height = max_y - min_y;
-                if (width <= 0 || height <= 0 || width > INT_MAX || height > INT_MAX) {
-                        fprintf(stderr, "Invalid combined monitor dimensions: %ldx%ld\n", width, height);
-                        for (int i = 0; i < idx; i++) {
-                                if (ctx->crtc_infos[i]) XRRFreeCrtcInfo(ctx->crtc_infos[i]);
-                                if (ctx->output_infos[i]) XRRFreeOutputInfo(ctx->output_infos[i]);
-                        }
-                        free(ctx->output_infos);
-                        free(ctx->crtc_infos);
-                        return -1;
-                }
-
-                // Set combined monitor parameters
-                ctx->monitor_x = min_x;
-                ctx->monitor_y = min_y;
-                ctx->monitor_width = width;
-                ctx->monitor_height = height;
-                printf("Combined monitors: %ldx%ld at (%ld,%ld)\n", ctx->monitor_width, ctx->monitor_height, ctx->monitor_x, ctx->monitor_y);
-        } else {
-                // Single monitor
-                int num_monitors = ctx->screen_res->noutput;
-                if (monitor_index >= num_monitors) {
-                        fprintf(stderr, "Monitor index %d out of range (0-%d)\n", monitor_index, num_monitors - 1);
-                        return -1;
-                }
-
-                ctx->output_infos = malloc(sizeof(XRROutputInfo *));
-                ctx->crtc_infos = malloc(sizeof(XRRCrtcInfo *));
-                if (!ctx->output_infos || !ctx->crtc_infos) {
-                        fprintf(stderr, "Failed to allocate monitor info arrays\n");
-                        if (ctx->output_infos) free(ctx->output_infos);
-                        if (ctx->crtc_infos) free(ctx->crtc_infos);
-                        return -1;
-                }
-                ctx->num_monitors = 1;
-
-                ctx->output_infos[0] = XRRGetOutputInfo(ctx->display, ctx->screen_res, ctx->screen_res->outputs[monitor_index]);
-                if (!ctx->output_infos[0] || ctx->output_infos[0]->connection != RR_Connected) {
-                        fprintf(stderr, "Monitor %d is not connected\n", monitor_index);
-                        free(ctx->output_infos);
-                        free(ctx->crtc_infos);
-                        return -1;
-                }
-
-                ctx->crtc_infos[0] = XRRGetCrtcInfo(ctx->display, ctx->screen_res, ctx->output_infos[0]->crtc);
-                if (!ctx->crtc_infos[0] || ctx->crtc_infos[0]->width <= 0 || ctx->crtc_infos[0]->height <= 0) {
-                        fprintf(stderr, "Failed to get valid CRTC info for monitor %d\n", monitor_index);
-                        if (ctx->crtc_infos[0]) XRRFreeCrtcInfo(ctx->crtc_infos[0]);
-                        XRRFreeOutputInfo(ctx->output_infos[0]);
-                        free(ctx->output_infos);
-                        free(ctx->crtc_infos);
-                        return -1;
-                }
-
-                ctx->monitor_x = ctx->crtc_infos[0]->x;
-                ctx->monitor_y = ctx->crtc_infos[0]->y;
-                ctx->monitor_width = ctx->crtc_infos[0]->width;
-                ctx->monitor_height = ctx->crtc_infos[0]->height;
-                printf("Monitor %d: %ldx%ld at (%ld,%ld)\n", monitor_index, ctx->monitor_width, ctx->monitor_height, ctx->monitor_x, ctx->monitor_y);
-        }
-
-        ctx->sws_ctx = sws_getContext(ctx->codec_ctx->width, ctx->codec_ctx->height, ctx->codec_ctx->pix_fmt,
-                                      ctx->monitor_width, ctx->monitor_height, AV_PIX_FMT_BGRA,
-                                      SWS_BILINEAR, NULL, NULL, NULL);
-        if (!ctx->sws_ctx) {
-                fprintf(stderr, "Could not initialize swscale context\n");
-                return -1;
-        }
-
-        ctx->frame = av_frame_alloc();
-        ctx->bgra_frame = av_frame_alloc();
-        ctx->packet = av_packet_alloc();
-        if (!ctx->frame || !ctx->bgra_frame || !ctx->packet) {
-                fprintf(stderr, "Memory allocation failed\n");
-                return -1;
-        }
-
-        ctx->bgra_size = av_image_get_buffer_size(AV_PIX_FMT_BGRA, ctx->monitor_width, ctx->monitor_height, 1);
-        if (ctx->bgra_size <= 0) {
-                fprintf(stderr, "Invalid BGRA buffer size for %ldx%ld\n", ctx->monitor_width, ctx->monitor_height);
-                return -1;
-        }
-        ctx->bgra_buffer = av_malloc(ctx->bgra_size * sizeof(uint8_t));
-        if (!ctx->bgra_buffer) {
-                fprintf(stderr, "Failed to allocate BGRA buffer\n");
-                return -1;
-        }
-        av_image_fill_arrays(ctx->bgra_frame->data, ctx->bgra_frame->linesize, ctx->bgra_buffer, AV_PIX_FMT_BGRA, ctx->monitor_width, ctx->monitor_height, 1);
-
-        ctx->root_pixmap = XCreatePixmap(ctx->display, ctx->root, DisplayWidth(ctx->display, ctx->screen), DisplayHeight(ctx->display, ctx->screen), ctx->depth);
-        ctx->root_gc = XCreateGC(ctx->display, ctx->root_pixmap, 0, NULL);
-        if (!ctx->root_gc) {
-                fprintf(stderr, "Failed to create root GC\n");
-                return -1;
-        }
-        XFillRectangle(ctx->display, ctx->root_pixmap, ctx->root_gc, 0, 0, DisplayWidth(ctx->display, ctx->screen), DisplayHeight(ctx->display, ctx->screen));
-
-        ctx->xrootpmap_id = XInternAtom(ctx->display, "_XROOTPMAP_ID", False);
-        ctx->esetroot_pmap_id = XInternAtom(ctx->display, "ESETROOT_PMAP_ID", False);
-
-        ctx->frame_interval = 1.0 / 30.0; // 30 FPS
-        ctx->video_time_base = av_q2d(ctx->fmt_ctx->streams[ctx->video_stream_idx]->time_base);
-        ctx->frame_duration = ctx->frame_interval / ctx->video_time_base;
-
-        return 0;
-}
-
-// Clean up common resources
-void cleanup_context(Context *ctx) {
-        if (ctx->root_gc) XFreeGC(ctx->display, ctx->root_gc);
-        if (ctx->root_pixmap) XFreePixmap(ctx->display, ctx->root_pixmap);
-        if (ctx->bgra_buffer) av_free(ctx->bgra_buffer);
-        if (ctx->frame) av_frame_free(&ctx->frame);
-        if (ctx->bgra_frame) av_frame_free(&ctx->bgra_frame);
-        if (ctx->packet) av_packet_free(&ctx->packet);
-        if (ctx->sws_ctx) sws_freeContext(ctx->sws_ctx);
-        for (int i = 0; i < ctx->num_monitors; i++) {
-                if (ctx->crtc_infos && ctx->crtc_infos[i]) XRRFreeCrtcInfo(ctx->crtc_infos[i]);
-                if (ctx->output_infos && ctx->output_infos[i]) XRRFreeOutputInfo(ctx->output_infos[i]);
-        }
-        if (ctx->crtc_infos) free(ctx->crtc_infos);
-        if (ctx->output_infos) free(ctx->output_infos);
-        if (ctx->screen_res) XRRFreeScreenResources(ctx->screen_res);
-        if (ctx->display) XCloseDisplay(ctx->display);
-        if (ctx->codec_ctx) avcodec_free_context(&ctx->codec_ctx);
-        if (ctx->fmt_ctx) avformat_close_input(&ctx->fmt_ctx);
-}
-
 // Display a single frame
 int display_frame(Context *ctx, uint8_t *data, int width, int height, int frame_count) {
-        uint8_t *ximage_buffer = malloc(ctx->bgra_size);
+        uint8_t *ximage_buffer = (uint8_t *)malloc(ctx->bgra_size);
         if (!ximage_buffer) {
                 fprintf(stderr, "Failed to allocate XImage buffer for frame %d\n", frame_count);
                 return -1;
@@ -414,8 +130,9 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         }
 
         // Allocate array for frames (assuming max 1000 frames)
-        Image *images = malloc(1000 * sizeof(Image));
-        if (!images) {
+        //Image *images = (Image *)malloc(1000 * sizeof(Image));
+        dyn_array(Image *, images);
+        if (!images.data) {
                 fprintf(stderr, "Failed to allocate image array\n");
                 cleanup_context(&ctx);
                 return -1;
@@ -423,8 +140,11 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         int image_count = 0;
         int64_t next_pts = 0;
 
+        const char loading[] = {'|', '/', '-', '\\', '|'};
+        size_t loading_len = sizeof(loading)/sizeof(*loading);
+        size_t loading_i = 0;
+
         // Load all frames
-        printf("Frames={");
         while (av_read_frame(ctx.fmt_ctx, ctx.packet) >= 0) {
                 if (ctx.packet->stream_index == ctx.video_stream_idx) {
                         if (avcodec_send_packet(ctx.codec_ctx, ctx.packet) >= 0) {
@@ -432,11 +152,12 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                                         if (ctx.frame->pts >= next_pts) {
                                                 sws_scale(ctx.sws_ctx, (const uint8_t * const *)ctx.frame->data, ctx.frame->linesize, 0, ctx.codec_ctx->height,
                                                           ctx.bgra_frame->data, ctx.bgra_frame->linesize);
-                                                Image *img = &images[image_count];
+                                                //Image *img = &images[image_count];
+                                                Image *img = (Image *)malloc(sizeof(Image));
                                                 img->width = ctx.monitor_width;
                                                 img->height = ctx.monitor_height;
                                                 img->size = ctx.bgra_size;
-                                                img->data = malloc(ctx.bgra_size);
+                                                img->data = (uint8_t *)malloc(ctx.bgra_size);
                                                 if (!img->data) {
                                                         fprintf(stderr, "Failed to allocate image data\n");
                                                         break;
@@ -444,15 +165,20 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                                                 memcpy(img->data, ctx.bgra_buffer, ctx.bgra_size);
                                                 image_count++;
                                                 next_pts += ctx.frame_duration;
-                                                printf("%d, ", image_count);
+                                                printf("Loading Frames... [%d] %c\n", image_count, loading[loading_i]);
                                                 fflush(stdout);
+                                                printf("\033[A");
+                                                printf("\033[2K");
+                                                if (image_count%5 == 0) {
+                                                        loading_i = (loading_i+1)%loading_len;
+                                                }
+                                                dyn_array_append(images, img);
                                         }
                                 }
                         }
                 }
                 av_packet_unref(ctx.packet);
         }
-        printf("}\n");
 
         printf("Loaded %d frames at %ldx%ld (BGRA)\n", image_count, ctx.monitor_width, ctx.monitor_height);
         sleep(1);
@@ -460,7 +186,7 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         // Display loop
         int i = 0;
         while (1) {
-                Image *img = &images[i];
+                Image *img = images.data[i];
                 if (!img->data) {
                         fprintf(stderr, "Null image data for frame %d\n", i);
                         i = (i + 1) % image_count;
@@ -483,53 +209,57 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                 } // Else skip sleep to avoid lag
 
                 printf("Displayed frame %d (processing: %ld us, sleep: %ld us)\n", i + 1, processing_time, sleep_time > 0 ? sleep_time : 0);
+                fflush(stdout);
+                printf("\033[A");
+                printf("\033[2K");
                 i = (i + 1) % image_count;
         }
 
         // Cleanup
         for (int i = 0; i < image_count; i++) {
-                if (images[i].data) free(images[i].data);
+                if (images.data[i]->data) free(images.data[i]->data);
         }
-        free(images);
+        //free(images);
+        dyn_array_free(images);
         cleanup_context(&ctx);
         return 0;
 }
 
 // Producer thread: decodes and scales frames
 void *producer_thread(void *arg) {
-        ThreadData *td = (ThreadData *)arg;
+        Thread_Data *td = (Thread_Data *)arg;
         Context *ctx = td->ctx;
         int64_t next_pts = 0;
         int frame_count = 0;
 
         while (1) {
-                pthread_mutex_lock(&td->mutex);
+                pthread_mutex_lock(&td->threading.mutex);
                 // Wait if buffer is full
                 while (td->count == td->buffer_size && !td->done) {
-                        pthread_cond_wait(&td->not_full, &td->mutex);
+                        pthread_cond_wait(&td->threading.not_full, &td->threading.mutex);
                 }
                 if (td->done) {
-                        pthread_mutex_unlock(&td->mutex);
+                        pthread_mutex_unlock(&td->threading.mutex);
                         break;
                 }
-                pthread_mutex_unlock(&td->mutex);
+                pthread_mutex_unlock(&td->threading.mutex);
 
                 int ret = av_read_frame(ctx->fmt_ctx, ctx->packet);
                 if (ret < 0) {
-                        pthread_mutex_lock(&td->mutex);
+                        pthread_mutex_lock(&td->threading.mutex);
                         av_packet_unref(ctx->packet);
                         avcodec_flush_buffers(ctx->codec_ctx);
                         if (avformat_seek_file(ctx->fmt_ctx, ctx->video_stream_idx, INT64_MIN, 0, INT64_MAX, 0) < 0) {
                                 fprintf(stderr, "Failed to seek to start of video\n");
                                 td->done = 1;
-                                pthread_cond_broadcast(&td->not_empty);
-                                pthread_mutex_unlock(&td->mutex);
+                                pthread_cond_broadcast(&td->threading.not_empty);
+                                pthread_mutex_unlock(&td->threading.mutex);
                                 break;
                         }
                         next_pts = 0;
                         frame_count = 0;
-                        printf("Restarting video loop\n");
-                        pthread_mutex_unlock(&td->mutex);
+                        //printf("Restarting video loop\n");
+                        pthread_mutex_unlock(&td->threading.mutex);
                         continue;
                 }
 
@@ -540,18 +270,18 @@ void *producer_thread(void *arg) {
                                                 sws_scale(ctx->sws_ctx, (const uint8_t * const *)ctx->frame->data, ctx->frame->linesize, 0,
                                                           ctx->codec_ctx->height, ctx->bgra_frame->data, ctx->bgra_frame->linesize);
 
-                                                pthread_mutex_lock(&td->mutex);
+                                                pthread_mutex_lock(&td->threading.mutex);
                                                 Image *img = &td->buffer[td->write_idx];
                                                 img->width = ctx->monitor_width;
                                                 img->height = ctx->monitor_height;
                                                 img->size = ctx->bgra_size;
                                                 if (!img->data) {
-                                                        img->data = malloc(ctx->bgra_size);
+                                                        img->data = (uint8_t *)malloc(ctx->bgra_size);
                                                         if (!img->data) {
                                                                 fprintf(stderr, "Failed to allocate buffer frame %d\n", frame_count);
                                                                 td->done = 1;
-                                                                pthread_cond_broadcast(&td->not_empty);
-                                                                pthread_mutex_unlock(&td->mutex);
+                                                                pthread_cond_broadcast(&td->threading.not_empty);
+                                                                pthread_mutex_unlock(&td->threading.mutex);
                                                                 break;
                                                         }
                                                 }
@@ -560,8 +290,8 @@ void *producer_thread(void *arg) {
                                                 td->count++;
                                                 frame_count++;
                                                 next_pts += ctx->frame_duration;
-                                                pthread_cond_signal(&td->not_empty);
-                                                pthread_mutex_unlock(&td->mutex);
+                                                pthread_cond_signal(&td->threading.not_empty);
+                                                pthread_mutex_unlock(&td->threading.mutex);
                                         }
                                 }
                         }
@@ -573,28 +303,28 @@ void *producer_thread(void *arg) {
 
 // Consumer thread: displays frames
 void *consumer_thread(void *arg) {
-        ThreadData *td = (ThreadData *)arg;
+        Thread_Data *td = (Thread_Data *)arg;
         Context *ctx = td->ctx;
         int frame_count = 0;
 
         while (1) {
                 long start_time = get_time_us();
 
-                pthread_mutex_lock(&td->mutex);
+                pthread_mutex_lock(&td->threading.mutex);
                 // Wait if buffer is empty
                 while (td->count == 0 && !td->done) {
-                        pthread_cond_wait(&td->not_empty, &td->mutex);
+                        pthread_cond_wait(&td->threading.not_empty, &td->threading.mutex);
                 }
                 if (td->count == 0 && td->done) {
-                        pthread_mutex_unlock(&td->mutex);
+                        pthread_mutex_unlock(&td->threading.mutex);
                         break;
                 }
 
                 Image *img = &td->buffer[td->read_idx];
                 td->read_idx = (td->read_idx + 1) % td->buffer_size;
                 td->count--;
-                pthread_cond_signal(&td->not_full);
-                pthread_mutex_unlock(&td->mutex);
+                pthread_cond_signal(&td->threading.not_full);
+                pthread_mutex_unlock(&td->threading.mutex);
 
                 if (display_frame(ctx, img->data, img->width, img->height, frame_count) < 0) {
                         continue;
@@ -612,6 +342,10 @@ void *consumer_thread(void *arg) {
 
                 printf("Displayed frame %d (processing: %ld us, sleep: %ld us)\n",
                        frame_count, processing_time, sleep_time > 0 ? sleep_time : 0);
+                fflush(stdout);
+                printf("\033[A");
+                printf("\033[2K");
+
         }
         return NULL;
 }
@@ -624,10 +358,10 @@ int run_stream(int monitor_index, const char *video_mp4) {
         }
 
         // Initialize threading data
-        ThreadData td = {0};
+        Thread_Data td = {0};
         td.ctx = &ctx;
         td.buffer_size = 2; // Small buffer to minimize memory
-        td.buffer = malloc(td.buffer_size * sizeof(Image));
+        td.buffer = (Image *)malloc(td.buffer_size * sizeof(Image));
         if (!td.buffer) {
                 fprintf(stderr, "Failed to allocate thread buffer\n");
                 cleanup_context(&ctx);
@@ -637,9 +371,9 @@ int run_stream(int monitor_index, const char *video_mp4) {
                 td.buffer[i].data = NULL; // Will be allocated in producer
                 td.buffer[i].size = ctx.bgra_size;
         }
-        pthread_mutex_init(&td.mutex, NULL);
-        pthread_cond_init(&td.not_full, NULL);
-        pthread_cond_init(&td.not_empty, NULL);
+        pthread_mutex_init(&td.threading.mutex, NULL);
+        pthread_cond_init(&td.threading.not_full, NULL);
+        pthread_cond_init(&td.threading.not_empty, NULL);
         td.done = 0;
 
         // Create threads
@@ -650,24 +384,24 @@ int run_stream(int monitor_index, const char *video_mp4) {
                         if (td.buffer[i].data) free(td.buffer[i].data);
                 }
                 free(td.buffer);
-                pthread_mutex_destroy(&td.mutex);
-                pthread_cond_destroy(&td.not_full);
-                pthread_cond_destroy(&td.not_empty);
+                pthread_mutex_destroy(&td.threading.mutex);
+                pthread_cond_destroy(&td.threading.not_full);
+                pthread_cond_destroy(&td.threading.not_empty);
                 cleanup_context(&ctx);
                 return -1;
         }
         if (pthread_create(&consumer, NULL, consumer_thread, &td) != 0) {
                 fprintf(stderr, "Failed to create consumer thread\n");
                 td.done = 1;
-                pthread_cond_broadcast(&td.not_empty);
+                pthread_cond_broadcast(&td.threading.not_empty);
                 pthread_join(producer, NULL);
                 for (int i = 0; i < td.buffer_size; i++) {
                         if (td.buffer[i].data) free(td.buffer[i].data);
                 }
                 free(td.buffer);
-                pthread_mutex_destroy(&td.mutex);
-                pthread_cond_destroy(&td.not_full);
-                pthread_cond_destroy(&td.not_empty);
+                pthread_mutex_destroy(&td.threading.mutex);
+                pthread_cond_destroy(&td.threading.not_full);
+                pthread_cond_destroy(&td.threading.not_empty);
                 cleanup_context(&ctx);
                 return -1;
         }
@@ -681,42 +415,72 @@ int run_stream(int monitor_index, const char *video_mp4) {
                 if (td.buffer[i].data) free(td.buffer[i].data);
         }
         free(td.buffer);
-        pthread_mutex_destroy(&td.mutex);
-        pthread_cond_destroy(&td.not_full);
-        pthread_cond_destroy(&td.not_empty);
+        pthread_mutex_destroy(&td.threading.mutex);
+        pthread_cond_destroy(&td.threading.not_full);
+        pthread_cond_destroy(&td.threading.not_empty);
         cleanup_context(&ctx);
         return 0;
 }
 
+void usage(void) {
+        printf("awx --wp=<path> [--mon=<integer>] [--mode=<load|stream>] [options...]\n");
+        printf("Options:\n");
+        printf("    %c, %s    display this message\n", FLAG_1HY_HELP, FLAG_2HY_HELP);
+        exit(0);
+}
+
 int main(int argc, char *argv[]) {
-        if (argc < 4) {
-                fprintf(stderr, "Usage: %s <input.mp4> <monitor_index> --mode=<load|stream>\n", argv[0]);
-                return -1;
+        --argc, ++argv;
+
+        clap_init(argc, argv);
+
+        Clap_Arg arg = {0};
+        while (clap_next(&arg)) {
+                if (arg.hyphc == 1 && arg.start[0] == FLAG_1HY_HELP) {
+                        usage();
+                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_HELP)) {
+                        usage();
+                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_WP)) {
+                        if (!arg.eq) {
+                                err("--wp expects a value after equals (=)\n");
+                        }
+                        g_config.wp = strdup(arg.eq);
+                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_MON)) {
+                        if (!arg.eq) {
+                                err("--mon expects a value after equals (=)\n");
+                        }
+                        if (!str_isdigit(arg.eq)) {
+                                err_wargs("--mon expects a number, not %s`\n", arg.eq);
+                        }
+                        g_config.mon = atoi(arg.eq);
+                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_MODE)) {
+                        if (!arg.eq) {
+                                err("--mode expects a value after equals (=)\n");
+                        }
+                        if (!strcmp(arg.eq, "load")) {
+                                g_config.mode = MODE_LOAD;
+                        } else if (!strcmp(arg.eq, "stream")) {
+                                g_config.mode = MODE_STREAM;
+                        } else {
+                                err_wargs("--mode expects either `stream` or `load`, not `%s`", arg.eq);
+                        }
+                } else {
+                        err_wargs("unknown option `%s`", arg.start);
+                }
         }
 
-        int monitor_index = atoi(argv[2]);
-        // -1 for combined monitors
-        if (monitor_index < -1) {
-                fprintf(stderr, "Invalid monitor index\n");
-                return -1;
+        if (!g_config.wp) {
+                err("Wallpaper filepath (--wp) is not set");
         }
 
-        char *mode_str = strstr(argv[3], "--mode=");
-        if (!mode_str || strlen(mode_str) <= 7) {
-                fprintf(stderr, "Mode not specified, defaulting to stream\n");
-                return run_stream(monitor_index, argv[1]);
-        }
+        printf("Wallpaper filepath: %s\n", g_config.wp);
+        printf("Monitor: %d %s\n", g_config.mon, g_config.mon == -1 ? "[Stretch]" : "");
+        printf("Mode: %s\n", g_config.mode == MODE_LOAD ? "load" : "stream");
 
-        mode_str += 7; // Skip "--mode="
-        if (strcmp(mode_str, "load") == 0) {
-                printf("Running in load-all mode\n");
-                return run_load_all(monitor_index, argv[1]);
-        } else if (strcmp(mode_str, "stream") == 0) {
-                printf("Running in stream mode\n");
-                return run_stream(monitor_index, argv[1]);
+        if (g_config.mode == MODE_STREAM) {
+                return run_stream(g_config.mon, g_config.wp);
         } else {
-                fprintf(stderr, "Invalid mode '%s', defaulting to stream\n", mode_str);
-                return run_stream(monitor_index, argv[1]);
+                return run_load_all(g_config.mon, g_config.wp);
         }
 
         return 0;
