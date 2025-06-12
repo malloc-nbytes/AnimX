@@ -1,3 +1,7 @@
+#include <string.h>
+#include <errno.h>
+#include <syslog.h>
+
 #include <libswscale/swscale.h>
 #include <libavutil/imgutils.h>
 
@@ -14,19 +18,19 @@ static AVCodec *find_codec_decoder(
         if (!codec) {
                 fprintf(stderr, "Decoder not found\n");
                 avformat_close_input(&fmt_ctx);
-                exit(1);
+                return NULL;
         }
         *codec_ctx = avcodec_alloc_context3(codec);
         if (avcodec_parameters_to_context(*codec_ctx, *codec_par) < 0) {
                 fprintf(stderr, "Failed to copy codec parameters\n");
                 avformat_close_input(&fmt_ctx);
-                exit(1);
+                return NULL;
         }
         if (avcodec_open2(*codec_ctx, codec, NULL) < 0) {
                 fprintf(stderr, "Could not open codec\n");
                 avcodec_free_context(codec_ctx);
                 avformat_close_input(&fmt_ctx);
-                exit(1);
+                return NULL;
         }
         return (AVCodec *)codec;
 }
@@ -43,7 +47,7 @@ static int get_video_stream_index(AVFormatContext *fmt_ctx) {
         if (video_stream_idx == -1) {
                 fprintf(stderr, "No video stream found\n");
                 avformat_close_input(&fmt_ctx);
-                exit(1);
+                return -1;
         }
         return video_stream_idx;
 }
@@ -51,13 +55,15 @@ static int get_video_stream_index(AVFormatContext *fmt_ctx) {
 static AVFormatContext *create_avformat_ctx(const char *video_fp) {
         AVFormatContext *fmt_ctx = NULL;
         if (avformat_open_input(&fmt_ctx, video_fp, NULL, NULL) < 0) {
-                fprintf(stderr, "Could not open video file\n");
-                exit(1);
+                syslog(LOG_ERR, "Could not open video file: %s, %s\n", video_fp, strerror(errno));
+                fprintf(stderr, "Could not open video file: %s, %s\n", video_fp, strerror(errno));
+                return NULL;
         }
         if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
+                syslog(LOG_ERR, "Could not find stream info\n");
                 fprintf(stderr, "Could not find stream info\n");
                 avformat_close_input(&fmt_ctx);
-                exit(1);
+                return NULL;
         }
         return fmt_ctx;
 }
@@ -65,11 +71,23 @@ static AVFormatContext *create_avformat_ctx(const char *video_fp) {
 int init_context(Context *ctx, int monitor_index, const char *video_mp4) {
         avformat_network_init();
         ctx->fmt_ctx = create_avformat_ctx(video_mp4);
+        if (!ctx->fmt_ctx) {
+                syslog(LOG_ERR, "ctx->fmt_ctx");
+                return -1;
+        }
         ctx->video_stream_idx = get_video_stream_index(ctx->fmt_ctx);
-        find_codec_decoder(ctx->fmt_ctx, ctx->video_stream_idx, &ctx->codec_ctx, &ctx->codec_par);
+        if (ctx->video_stream_idx == -1) {
+                syslog(LOG_ERR, "ctx->video_stream_idx");
+                return -1;
+        }
+        if (!find_codec_decoder(ctx->fmt_ctx, ctx->video_stream_idx, &ctx->codec_ctx, &ctx->codec_par)) {
+                syslog(LOG_ERR, "find_codec_decoder()");
+                return -1;
+        }
 
         ctx->display = XOpenDisplay(NULL);
         if (!ctx->display) {
+                syslog(LOG_ERR, "Cannot open X display\n");
                 fprintf(stderr, "Cannot open X display\n");
                 return -1;
         }
@@ -81,6 +99,7 @@ int init_context(Context *ctx, int monitor_index, const char *video_mp4) {
 
         ctx->screen_res = XRRGetScreenResources(ctx->display, ctx->root);
         if (!ctx->screen_res) {
+                syslog(LOG_ERR, "Failed to get screen resources\n");
                 fprintf(stderr, "Failed to get screen resources\n");
                 return -1;
         }
@@ -104,6 +123,7 @@ int init_context(Context *ctx, int monitor_index, const char *video_mp4) {
                 }
 
                 if (connected_count == 0) {
+                        syslog(LOG_ERR, "No connected monitors with valid CRTCs found\n");
                         fprintf(stderr, "No connected monitors with valid CRTCs found\n");
                         return -1;
                 }
@@ -112,6 +132,7 @@ int init_context(Context *ctx, int monitor_index, const char *video_mp4) {
                 ctx->output_infos = (XRROutputInfo **)malloc(connected_count * sizeof(XRROutputInfo *));
                 ctx->crtc_infos = (XRRCrtcInfo **)malloc(connected_count * sizeof(XRRCrtcInfo *));
                 if (!ctx->output_infos || !ctx->crtc_infos) {
+                        syslog(LOG_ERR, "Failed to allocate monitor info arrays\n");
                         fprintf(stderr, "Failed to allocate monitor info arrays\n");
                         if (ctx->output_infos) free(ctx->output_infos);
                         if (ctx->crtc_infos) free(ctx->crtc_infos);

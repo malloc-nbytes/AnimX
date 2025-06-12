@@ -34,18 +34,10 @@
 #include "context.h"
 #include "flag.h"
 #include "utils.h"
+#include "gl.h"
 #include "dyn_array.h"
 #define CLAP_IMPL
 #include "clap.h"
-
-#define FIFO_PATH "/tmp/awx.fifo"
-#define LOG_PATH "/tmp/log/awx.log"
-#define PID_PATH "/tmp/awx.pid"
-
-typedef enum {
-        MODE_LOAD = 0,
-        MODE_STREAM,
-} Mode_Type;
 
 static struct {
         uint32_t flags;
@@ -201,10 +193,10 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                                                 memcpy(img.data, ctx.bgra_buffer, ctx.bgra_size);
                                                 image_count++;
                                                 next_pts += ctx.frame_duration;
-                                                printf("Loading Frames... [%d], mem=%fGB %c\n", image_count, GBs, loading[loading_i]);
-                                                fflush(stdout);
-                                                printf("\033[A");
-                                                printf("\033[2K");
+                                                /* printf("Loading Frames... [%d], mem=%fGB %c\n", image_count, GBs, loading[loading_i]); */
+                                                /* fflush(stdout); */
+                                                /* printf("\033[A"); */
+                                                /* printf("\033[2K"); */
                                                 if (image_count%5 == 0) {
                                                         loading_i = (loading_i+1)%loading_len;
                                                 }
@@ -245,10 +237,10 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                         usleep(sleep_time);
                 } // Else skip sleep to avoid lag
 
-                printf("Displayed frame %d (processing: %ld us, sleep: %ld us)\n", i + 1, processing_time, sleep_time > 0 ? sleep_time : 0);
-                fflush(stdout);
-                printf("\033[A");
-                printf("\033[2K");
+                /* printf("Displayed frame %d (processing: %ld us, sleep: %ld us)\n", i + 1, processing_time, sleep_time > 0 ? sleep_time : 0); */
+                /* fflush(stdout); */
+                /* printf("\033[A"); */
+                /* printf("\033[2K"); */
                 i = (i + 1) % image_count;
         }
 
@@ -388,11 +380,15 @@ void *consumer_thread(void *arg) {
 }
 
 int run_stream(int monitor_index, const char *video_mp4) {
+        syslog(LOG_INFO, "run_stream()");
         Context ctx = {0};
         if (init_context(&ctx, monitor_index, video_mp4) < 0) {
+                syslog(LOG_INFO, "init context failed");
                 cleanup_context(&ctx);
                 return -1;
         }
+
+        syslog(LOG_INFO, "init context");
 
         // Initialize threading data
         Thread_Data td = {0};
@@ -537,43 +533,16 @@ static void daemonize(void) {
         // Note: don't close pid_fd — keep it open to hold the lock
 }
 
-/* static void daemonize(void) { */
-/*         pid_t pid, sid; */
-
-/*         if ((pid = fork()) < 0) { exit(1); } */
-/*         if (pid > 0)            { exit(0); } */
-
-/*         if ((sid = setsid()) < 0) { */
-/*                 perror("setsid"); */
-/*                 exit(1); */
-/*         } */
-
-/*         // Fork again (avoid terminal acquisition) */
-/*         if ((pid = fork()) < 0) { exit(1); } */
-/*         if (pid > 0)            { exit(0); } */
-
-/*         if (chdir("/") < 0) { exit(1); } */
-
-/*         // Reset file creation mask. */
-/*         umask(0); */
-
-/*         close(STDIN_FILENO); */
-/*         close(STDOUT_FILENO); */
-/*         close(STDERR_FILENO); */
-
-/*         // Redirect file descriptors. */
-/*         open("/dev/null", O_RDWR);         // stdin */
-/*         int _ = dup(0);                    // stdout */
-/*         _     = dup(0);                    // stderr */
-/* } */
-
 static void signal_handler(int sig) {
         if (sig == SIGTERM) {
                 syslog(LOG_INFO, "Received SIGTERM, shutting down.");
                 closelog();
 
                 unlink(PID_PATH);
-                if (g_pid_fd >= 0) { close(g_pid_fd); }
+                unlink(FIFO_PATH);
+                if (g_pid_fd >= 0) {
+                        close(g_pid_fd);
+                }
 
                 exit(0);
         }
@@ -588,35 +557,143 @@ static void usage(void) {
         printf("        --%s=<float>       set a maximum memory limit for --mode=load\n", FLAG_2HY_MAXMEM);
 }
 
+static void parse_daemon_sender_msg(const char *msg) {
+        while (*msg) {
+                if (*msg == ' ' || *msg == '\n') {
+                        ++msg;
+                        continue;
+                }
+                if (*msg == '-' && msg[1] == '-') {
+                        msg += 2;
+                        char buf[256] = {0};
+                        size_t blen = 0;
+                        while (*msg && *msg != ' ' && *msg != '\n' && blen < sizeof(buf) - 1) {
+                                buf[blen++] = *msg++;
+                        }
+                        buf[blen] = '\0';
+                        char cmd[256] = {0};
+                        size_t cmd_end = 0;
+                        int iseq = 0;
+                        for (cmd_end = 0; cmd_end < blen; ++cmd_end) {
+                                if (buf[cmd_end] == '=' || buf[cmd_end] == ' ') {
+                                        iseq = buf[cmd_end] == '=';
+                                        break;
+                                }
+                        }
+                        memcpy(cmd, buf, cmd_end);
+                        cmd[cmd_end] = '\0';
+                        char *rest = &buf[cmd_end + (iseq ? 1 : 0)];
+                        // Trim trailing spaces from rest
+                        size_t rest_len = strlen(rest);
+                        while (rest_len > 0 && rest[rest_len - 1] == ' ') {
+                                rest[--rest_len] = '\0';
+                        }
+                        syslog(LOG_INFO, "cmd: %s", cmd);
+                        syslog(LOG_INFO, "rest: %s", rest);
+                        if (!strcmp(cmd, "mode")) {
+                                if (!iseq) {
+                                        syslog(LOG_ERR, "option `%s` requires equals (=)", cmd);
+                                        err_wargs("option `%s` requires equals (=)", cmd);
+                                }
+                                if (!strcmp(rest, "stream")) {
+                                        g_config.mode = MODE_STREAM;
+                                        syslog(LOG_INFO, "set mode to STREAM %s", cmd);
+                                } else if (!strcmp(rest, "load")) {
+                                        g_config.mode = MODE_LOAD;
+                                        syslog(LOG_INFO, "set mode to LOAD %s", cmd);
+                                } else {
+                                        syslog(LOG_ERR, "unknown mode `%s`", rest);
+                                        err_wargs("unknown mode `%s`", rest);
+                                }
+                        } else if (!strcmp(cmd, "mon")) {
+                                if (!iseq) {
+                                        syslog(LOG_ERR, "option `%s` requires equals (=)", cmd);
+                                        err_wargs("option `%s` requires equals (=)", cmd);
+                                }
+                                if (!str_isdigit(rest)) {
+                                        syslog(LOG_ERR, "option `%s` expects a number, got `%s`", cmd, rest);
+                                        err_wargs("option `%s` expects a number, got `%s`", cmd, rest);
+                                }
+                                g_config.mon = atoi(rest);
+                                syslog(LOG_INFO, "set monitor to %d", g_config.mon);
+                        } else {
+                                syslog(LOG_ERR, "Unknown option: %s", cmd);
+                                err_wargs("Unknown  option: %s", cmd);
+                        }
+                } else {
+                        char buf[256] = {0};
+                        size_t blen = 0;
+                        while (*msg && *msg != ' ' && *msg != '\n' && blen < sizeof(buf) - 1) {
+                                buf[blen++] = *msg++;
+                        }
+                        buf[blen] = '\0';
+                        // Trim trailing spaces from buf
+                        while (blen > 0 && buf[blen - 1] == ' ') {
+                                buf[--blen] = '\0';
+                        }
+                        if (g_config.wp) {
+                                free(g_config.wp);
+                        }
+                        g_config.wp = strdup(buf);
+                        syslog(LOG_INFO, "fp: %s", g_config.wp ? g_config.wp : "(null)");
+                }
+        }
+}
+
 static void daemon_loop(void) {
         daemonize();
         openlog("awx", LOG_PID | LOG_CONS, LOG_DAEMON);
         signal(SIGTERM, signal_handler);
 
-        if (mkfifo(FIFO_PATH, 0666) < 0 && errno != EEXIST) {
+        // Remove existing FIFO if it exists
+        unlink(FIFO_PATH);
+
+        // Create new FIFO
+        if (mkfifo(FIFO_PATH, 0666) < 0) {
                 syslog(LOG_ERR, "Failed to create FIFO %s: %s", FIFO_PATH, strerror(errno));
                 exit(EXIT_FAILURE);
         }
 
+        // Open FIFO for reading
+        FILE *fifo = fopen(FIFO_PATH, "r");
+        if (!fifo) {
+                syslog(LOG_ERR, "Failed to open FIFO %s for reading: %s", FIFO_PATH, strerror(errno));
+                exit(EXIT_FAILURE);
+        }
+
+        char buf[256];
         while (1) {
-                if (g_config.wp && g_config.mode == MODE_STREAM) {
-                        (void)run_stream(g_config.mon, g_config.wp);
-                } else if (g_config.wp && g_config.mode == MODE_LOAD) {
-                        (void)run_load_all(g_config.mon, g_config.wp);
-                } else {
-                        FILE *log = fopen(LOG_PATH, "a");
-                        if (log) {
-                                time_t now = time(NULL);
-                                char *time_str = ctime(&now);
-                                time_str[strlen(time_str) - 1] = '\0';
-                                fprintf(log, "[%s] Waiting...\n", time_str);
-                                fclose(log);
+                // Read message from FIFO
+                if (fgets(buf, sizeof(buf), fifo)) {
+                        syslog(LOG_INFO, "Received message: %s", buf);
+                        parse_daemon_sender_msg(buf);
+                        syslog(LOG_INFO, "Parsed message: %s", buf);
+                        if (g_config.wp) {
+                                syslog(LOG_INFO, "Got wallpaper filepath: %s with mode %d", g_config.wp, (int)g_config.mode);
+                                if (g_config.mode == MODE_STREAM) {
+                                        syslog(LOG_INFO, "STREAMING");
+                                        (void)run_stream(g_config.mon, g_config.wp);
+                                        syslog(LOG_INFO, "DONE");
+                                } else if (g_config.mode == MODE_LOAD) {
+                                        syslog(LOG_INFO, "LOADING");
+                                        (void)run_load_all(g_config.mon, g_config.wp);
+                                }
                         }
-                        sleep(3);
+                } else {
+                        // EOF or error; reopen FIFO to wait for new writers
+                        fclose(fifo);
+                        fifo = fopen(FIFO_PATH, "r");
+                        if (!fifo) {
+                                syslog(LOG_ERR, "Failed to reopen FIFO %s: %s", FIFO_PATH, strerror(errno));
+                                exit(EXIT_FAILURE);
+                        }
                 }
         }
 
+        // Cleanup (unreachable in this loop, but for completeness)
+        fclose(fifo);
         free(g_config.wp);
+        unlink(FIFO_PATH);
         closelog();
 }
 
@@ -637,8 +714,58 @@ static int daemon_running(void) {
         return kill(pid, 0) == 0;
 }
 
+static int determine_argc(const char *s) {
+        int argc = 0;
+        for (size_t i = 0; s[i]; ++i) {
+                char c = s[i];
+                if (c == ' ') ++argc;
+        }
+        return argc;
+}
+
+void send_msg(char **msg, size_t len) {
+        dyn_array(char, buf);
+        for (size_t i = 0; i < len; ++i) {
+                for (size_t j = 0; msg[i][j]; ++j) {
+                        dyn_array_append(buf, msg[i][j]);
+                }
+                if (i != len - 1) {
+                        dyn_array_append(buf, ' ');
+                }
+        }
+
+        // Open FIFO in non-blocking mode
+        int fd = open(FIFO_PATH, O_WRONLY | O_NONBLOCK);
+        if (fd < 0) {
+                if (errno == ENXIO) {
+                        fprintf(stderr, "No process is reading from FIFO %s\n", FIFO_PATH);
+                } else {
+                        perror("open");
+                }
+                dyn_array_free(buf);
+                return;
+        }
+
+        // Convert file descriptor to FILE stream
+        FILE *f = fdopen(fd, "w");
+        if (!f) {
+                perror("fdopen");
+                close(fd);
+                dyn_array_free(buf);
+                return;
+        }
+
+        // Write message
+        fprintf(f, "%s\n", buf.data);
+        fclose(f); // Closes fd as well
+        dyn_array_free(buf);
+}
+
 int main(int argc, char *argv[]) {
         --argc, ++argv;
+
+        char **orig_argv = argv;
+        int orig_argc = argc;
 
         clap_init(argc, argv);
 
@@ -700,6 +827,7 @@ int main(int argc, char *argv[]) {
                         err_wargs("unknown option `%s`", arg.start);
                 }
         }
+        clap_destroy();
 
         if (!g_config.wp) {
                 //err("Wallpaper filepath is not set");
@@ -726,6 +854,7 @@ int main(int argc, char *argv[]) {
                 if (!daemon_running()) {
                         err("awx daemon is not running, start with (-d | --daemon)");
                 }
+                send_msg(orig_argv, orig_argc);
                 printf("sent message\n");
         }
 

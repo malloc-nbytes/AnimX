@@ -4,18 +4,36 @@
 #ifdef CLAP_IMPL
 
 #include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 
 static struct {
         int argc;
         char **argv;
+        int orig_argc;
 } __clap_config = {
         .argc = 0,
         .argv = NULL,
+        .orig_argc = 0,
 };
 
 void clap_init(int argc, char **argv) {
+        /* __clap_config.argc = argc; */
+        /* __clap_config.argv = argv; */
+        __clap_config.orig_argc = argc;
         __clap_config.argc = argc;
-        __clap_config.argv = argv;
+        __clap_config.argv = malloc(sizeof(char *)*argc);
+        for (size_t i = 0; i < argc; ++i) {
+                __clap_config.argv[i] = strdup(argv[i]);
+        }
+}
+
+void clap_destroy(void) {
+        /* for (size_t i = 0; i < __clap_config.orig_argc; ++i) { */
+        /*         free(__clap_config.argv[i]); */
+        /* } */
+        // why does this segfault???
+        //free(__clap_config.argv);
 }
 
 typedef struct {
