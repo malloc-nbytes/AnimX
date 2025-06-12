@@ -651,7 +651,7 @@ static void daemon_loop(void) {
         // Create new FIFO
         if (mkfifo(FIFO_PATH, 0666) < 0) {
                 syslog(LOG_ERR, "Failed to create FIFO %s: %s", FIFO_PATH, strerror(errno));
-                exit(EXIT_FAILURE);
+                /* exit(EXIT_FAILURE); */
         }
 
         // Open FIFO for reading
