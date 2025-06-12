@@ -54,9 +54,9 @@ static struct {
 };
 
 typedef struct {
-        uint8_t *data; // BGRA data
+        uint8_t *data;     // BGRA data
         int width, height; // Frame dimensions
-        int size; // Size of data (width * height * 4 for BGRA)
+        int size;          // Size of data (width * height * 4 for BGRA)
 } Image;
 
 static int g_pid_fd;
@@ -84,29 +84,27 @@ typedef struct {
         pthread_t thread;        // Worker thread handle
         pthread_mutex_t mutex;   // Mutex for worker state
         pthread_cond_t cond;     // Condition variable for signaling worker start/stop
-        int running;            // Flag indicating if worker is running
-        int stop;               // Flag to signal worker to stop
-        char *wp;               // Current wallpaper path
-        int mon;                // Current monitor index
-        Mode_Type mode;         // Current mode
-        double maxmem;          // Current max memory (for MODE_LOAD)
-        Thread_Data *td;        // Pointer to Thread_Data for run_stream
+        int running;             // Flag indicating if worker is running
+        int stop;                // Flag to signal worker to stop
+        char *wp;                // Current wallpaper path
+        int mon;                 // Current monitor index
+        Mode_Type mode;          // Current mode
+        double maxmem;           // Current max memory
+        Thread_Data *td;         // Thread_Data for run_stream
 } Worker_Data;
 
 int run_stream(int monitor_index, const char *video_mp4);
 int run_load_all(int monitor_index, const char *video_mp4);
 static void parse_daemon_sender_msg(const char *msg);
 
-// Initialize thread-specific key
 static void init_thread_specific(void) {
         pthread_key_create(&worker_data_key, NULL);
 }
 
 static int is_single_frame(Context *ctx) {
-        // Check if the input is likely an image (single frame)
-        // Images typically have a duration of 0 or a single frame
+        // Check if the input is single frame (image)
         if (ctx->fmt_ctx->duration != AV_NOPTS_VALUE && ctx->fmt_ctx->duration <= AV_TIME_BASE) {
-                return 1; // Duration <= 1 second, likely an image
+                return 1;
         }
 
         // Alternatively, try decoding to count frames
@@ -211,14 +209,12 @@ void *worker_thread(void *arg) {
         return NULL;
 }
 
-// Current time in microseconds
 long get_time_us(void) {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
-        return ts.tv_sec * 1000000L + ts.tv_nsec / 1000L;
+        return ts.tv_sec * 1000000L + ts.tv_nsec / 1000L; // Microseconds
 }
 
-// Display a single frame
 int display_frame(Context *ctx, uint8_t *data, int width, int height, int frame_count) {
         uint8_t *ximage_buffer = (uint8_t *)malloc(ctx->bgra_size);
         if (!ximage_buffer) {
@@ -317,7 +313,7 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                         av_packet_unref(ctx.packet);
                 }
                 cleanup_context(&ctx);
-                return single_frame; // Return 1 to indicate single frame
+                return single_frame; // Return 1 for single frame
         }
 
         // Multi-frame logic
@@ -418,14 +414,15 @@ int run_load_all(int monitor_index, const char *video_mp4) {
 
                 long end_time = get_time_us();
                 long processing_time = end_time - start_time;
-                long target_time = 33333; // 33.33ms for 30 FPS
+                long target_time = 33333; // 33.33ms -> ~30 FPS
                 long sleep_time = target_time - processing_time;
 
                 if (sleep_time > 0) {
                         usleep(sleep_time);
                 }
 
-                printf("Displayed frame %d (processing: %ld us, sleep: %ld us)\n", i + 1, processing_time, sleep_time > 0 ? sleep_time : 0);
+                printf("Displayed frame %d (processing: %ld us, sleep: %ld us)\n",
+                       i + 1, processing_time, sleep_time > 0 ? sleep_time : 0);
                 fflush(stdout);
                 printf("\033[A");
                 printf("\033[2K");
@@ -548,7 +545,7 @@ void *consumer_thread(void *arg) {
                 frame_count++;
                 long end_time = get_time_us();
                 long processing_time = end_time - start_time;
-                long target_time = 33333; // 33.33ms for 30 FPS
+                long target_time = 33333; // 33.33ms -> ~30 FPS
                 long sleep_time = target_time - processing_time;
 
                 if (sleep_time > 0) {
@@ -679,7 +676,7 @@ int run_stream(int monitor_index, const char *video_mp4) {
                         av_packet_unref(ctx.packet);
                 }
                 cleanup_context(&ctx);
-                return single_frame; // Return 1 to indicate single frame
+                return single_frame; // Return 1 for single frame
         }
 
         // Existing multi-frame logic
@@ -826,7 +823,7 @@ static void daemonize(void) {
                 exit(EXIT_FAILURE);
         }
 
-        // Note: don't close pid_fd — keep it open to hold the lock
+        // Note: don't close pid_fd; keep it open to hold the lock
 }
 
 static void signal_handler(int sig) {
@@ -976,7 +973,7 @@ static void daemon_loop(void) {
         unlink(FIFO_PATH);
         if (mkfifo(FIFO_PATH, 0666) < 0) {
                 syslog(LOG_ERR, "Failed to create FIFO %s: %s", FIFO_PATH, strerror(errno));
-                /* exit(EXIT_FAILURE); */
+                /* exit(0); */
         }
 
         init_thread_specific();
@@ -1053,15 +1050,6 @@ static int daemon_running(void) {
         fclose(f);
 
         return kill(pid, 0) == 0;
-}
-
-static int determine_argc(const char *s) {
-        int argc = 0;
-        for (size_t i = 0; s[i]; ++i) {
-                char c = s[i];
-                if (c == ' ') ++argc;
-        }
-        return argc;
 }
 
 void send_msg(char **msg, size_t len) {
@@ -1206,7 +1194,7 @@ int main(int argc, char *argv[]) {
                         if (result == 1) {
                                 printf("Applied single-frame image, exiting\n");
                                 free(g_config.wp);
-                                exit(EXIT_SUCCESS);
+                                return 0;
                         }
                 }
                 send_msg(orig_argv, orig_argc);
