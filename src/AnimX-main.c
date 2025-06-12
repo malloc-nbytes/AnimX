@@ -31,10 +31,10 @@
 #include <X11/Xatom.h>
 
 // Local
-#include "context.h"
-#include "flag.h"
-#include "utils.h"
-#include "gl.h"
+#include "AnimX-context.h"
+#include "AnimX-flag.h"
+#include "AnimX-utils.h"
+#include "AnimX-gl.h"
 #include "dyn_array.h"
 #define CLAP_IMPL
 #include "clap.h"
@@ -870,7 +870,7 @@ static void stop_daemon(void) {
 }
 
 static void usage(void) {
-        printf("awx <walpaper_filepath> [options...]\n");
+        printf("AnimX <walpaper_filepath> [options...]\n");
         printf("Options:\n");
         printf("    -%c, --%s[=<flag>|*]      display this message or get help on individual flags or all (*)\n", FLAG_1HY_HELP, FLAG_2HY_HELP);
         printf("    -%c, --%s               start the daemon\n", FLAG_1HY_DAEMON, FLAG_2HY_DAEMON);
@@ -967,7 +967,7 @@ static void daemon_loop(void) {
         printf("starting daemon, do `tail -f /var/log/syslog` to see logging\n");
 
         daemonize();
-        openlog("awx", LOG_PID | LOG_CONS, LOG_DAEMON);
+        openlog("AnimX", LOG_PID | LOG_CONS, LOG_DAEMON);
         signal(SIGTERM, signal_handler);
 
         unlink(FIFO_PATH);
@@ -1162,7 +1162,7 @@ int main(int argc, char *argv[]) {
 
         if (g_config.flags & FT_DAEMON) {
                 if (daemon_running()) {
-                        err("awx daemon is already running");
+                        err("AnimX daemon is already running");
                 }
 
                 printf("Wallpaper filepath: %s\n", g_config.wp);

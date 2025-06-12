@@ -15,7 +15,7 @@ try { install = argv()[1] == "install"; }
 try { uninstall = argv()[1] == "uninstall"; }
 
 if !uninstall && !install {
-        println(clr::Te.Bold, "======= ", clr::Tfc.Green, "Building awx", clr::Te.Reset, clr::Te.Bold, " =======", clr::Te.Reset);
+        println(clr::Te.Bold, "======= ", clr::Tfc.Green, "Building AnimX", clr::Te.Reset, clr::Te.Bold, " =======", clr::Te.Reset);
 
         let deps_ok = true;
         let needed = [];
@@ -32,7 +32,7 @@ if !uninstall && !install {
 
         if len(needed) > 0 {
                 deps_ok = false;
-                println(clr::Tfc.Red, "Dependencies {needed} is required for building awx", clr::Te.Reset);
+                println(clr::Tfc.Red, "Dependencies {needed} is required for building AnimX", clr::Te.Reset);
         }
 
         needed = [];
@@ -50,7 +50,7 @@ if !uninstall && !install {
 
         if len(needed) > 0 {
                 deps_ok = false;
-                println(clr::Tfc.Red, f"Headers {needed} are required for building awx", clr::Te.Reset);
+                println(clr::Tfc.Red, f"Headers {needed} are required for building AnimX", clr::Te.Reset);
         }
 
         if !deps_ok { exit(1); }
@@ -61,10 +61,10 @@ $"pkg-config --libs libavcodec libavformat libavutil libswscale imlib2 x11 xrand
 @const let ccomb_flags = f"{cflags} -O3 -Iinclude/ {ld}";
 
 @const let cc = "cc";
-@const let cname = "-o awx";
+@const let cname = "-o AnimX";
 @const let cfiles = List::to_str(sys::ls(".")
         .filter(|f| {
-                return !sys::isdir(f) && !("./awx", "./build.rl").contains(f);
+                return !sys::isdir(f) && !("./AnimX", "./build.rl").contains(f);
         }));
 
 if !uninstall && !install {
@@ -80,9 +80,9 @@ if !uninstall && !install {
 }
 
 if install {
-        $"sudo cp ./awx /usr/local/bin/awx";
+        $"sudo cp ./AnimX /usr/local/bin/AnimX";
 } else if uninstall {
-        $"sudo rm /usr/local/bin/awx";
+        $"sudo rm /usr/local/bin/AnimX";
 } else {
         if debug {
                 $f"{cc} {ccomb_flags} -ggdb -O0 {cname} {cfiles}";

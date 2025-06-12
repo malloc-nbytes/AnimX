@@ -5,7 +5,7 @@
 #include <libswscale/swscale.h>
 #include <libavutil/imgutils.h>
 
-#include "context.h"
+#include "AnimX-context.h"
 
 static AVCodec *find_codec_decoder(
         AVFormatContext *fmt_ctx,

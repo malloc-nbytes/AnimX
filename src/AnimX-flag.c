@@ -1,16 +1,16 @@
 #include <string.h>
 
-#include "flag.h"
-#include "utils.h"
+#include "AnimX-flag.h"
+#include "AnimX-utils.h"
 
 static void help_info(void) {
         printf("--help(%c, %s):\n", FLAG_1HY_HELP, FLAG_2HY_HELP);
         printf("    Show the help menu or help on individual flags with `--help=<flag>|*`.\n\n");
         printf("    Example:\n");
-        printf("        awx --help\n");
-        printf("        awx -h\n");
-        printf("        awx --help=version\n");
-        printf("        awx -h=wp\n");
+        printf("        AnimX --help\n");
+        printf("        AnimX -h\n");
+        printf("        AnimX --help=version\n");
+        printf("        AnimX -h=wp\n");
 }
 
 static void mon_info(void) {
@@ -23,9 +23,9 @@ static void mon_info(void) {
         printf("        memory usage. It is recommended to use --mode=stream\n");
         printf("        if you do not have a lot of RAM (or use --maxmem option).\n\n");
         printf("    Example:\n");
-        printf("        awx --mon=1\n");
-        printf("        awx --mon=2\n");
-        printf("        awx --mon=-1 # combine all monitors into one monitor\n");
+        printf("        AnimX --mon=1\n");
+        printf("        AnimX --mon=2\n");
+        printf("        AnimX --mon=-1 # combine all monitors into one monitor\n");
 }
 
 static void mode_info(void) {
@@ -44,8 +44,8 @@ static void mode_info(void) {
         printf("        If you have limited memory, it may be wise to use the\n");
         printf("        --maxmem option to ensure you do not run out.\n\n");
         printf("    Example:\n");
-        printf("        awx --mode=stream\n");
-        printf("        awx --mode=load\n");
+        printf("        AnimX --mode=stream\n");
+        printf("        AnimX --mode=load\n");
 }
 
 static void maxmem_info(void) {
@@ -59,35 +59,35 @@ static void maxmem_info(void) {
         printf("    This option does nothing when --mode=stream is used.\n\n");
 
         printf("    Example:\n");
-        printf("        awx --maxmem=1.0\n");
-        printf("        awx --maxmem=1\n");
-        printf("        awx --maxmem=5.4\n");
-        printf("        awx --maxmem=2.1234\n");
+        printf("        AnimX --maxmem=1.0\n");
+        printf("        AnimX --maxmem=1\n");
+        printf("        AnimX --maxmem=5.4\n");
+        printf("        AnimX --maxmem=2.1234\n");
 }
 
 static void daemon_info(void) {
         printf("--help(%c, %s):\n", FLAG_1HY_DAEMON, FLAG_2HY_DAEMON);
         printf("    Launch the deamon. If you do not provide any information\n");
-        printf("    to awx when launching the daemon, it will wait until\n");
+        printf("    to AnimX when launching the daemon, it will wait until\n");
         printf("    you send a signal to it. Issue the `--kill` flag to stop it.\n\n");
         printf("    Note:\n");
         printf("        1. You can see logging information in `/var/log/syslog`.\n");
         printf("        2. A FIFO file and PID file are created in `/tmp/`.\n\n");
         printf("    Example:\n");
-        printf("        awx -d                                     # starts the daemon, does nothing noticable\n");
-        printf("        awx /home/user/vids/vid.mp4 --mon=1        # the daemon will use this information\n");
-        printf("        awx --mode=load                            # the daemon will use this information\n");
-        printf("        awx /home/user/vids/vid2.mp4               # the daemon will use this information\n");
-        printf("        awx --stop                                 # kill daemon\n");
-        printf("        awx -d /home/user/vids/vid.mp4 --mode=load # daemon will start with this information\n");
+        printf("        AnimX -d                                     # starts the daemon, does nothing noticable\n");
+        printf("        AnimX /home/user/vids/vid.mp4 --mon=1        # the daemon will use this information\n");
+        printf("        AnimX --mode=load                            # the daemon will use this information\n");
+        printf("        AnimX /home/user/vids/vid2.mp4               # the daemon will use this information\n");
+        printf("        AnimX --stop                                 # kill daemon\n");
+        printf("        AnimX -d /home/user/vids/vid.mp4 --mode=load # daemon will start with this information\n");
 }
 
 static void stop_info(void) {
         printf("--help(%s):\n", FLAG_2HY_STOP);
         printf("    Stop the daemon. If it is not running, this flag does nothing.\n");
         printf("    Example:\n");
-        printf("        awx --deamon\n");
-        printf("        awx --stop\n");
+        printf("        AnimX --deamon\n");
+        printf("        AnimX --stop\n");
 }
 
 void dump_flag_info(const char *name) {

@@ -14,8 +14,8 @@ typedef enum Mode_Type {
 /*         double maxmem; */
 /* } g_config; */
 
-#define FIFO_PATH "/tmp/awx.fifo"
-#define LOG_PATH "/tmp/log/awx.log"
-#define PID_PATH "/tmp/awx.pid"
+#define FIFO_PATH "/tmp/AnimX.fifo"
+#define LOG_PATH "/tmp/log/AnimX.log"
+#define PID_PATH "/tmp/AnimX.pid"
 
 #endif // GL_H
