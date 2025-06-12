@@ -11,49 +11,50 @@ set_flag("-xe");
 
 println(clr::Te.Bold, "======= ", clr::Tfc.Green, "Building awx", clr::Te.Reset, clr::Te.Bold, " =======", clr::Te.Reset);
 
-let deps_ok = true;
-
-let needed = [];
-println(clr::Tfc.Yellow, "Checking dependencies...", clr::Te.Reset);
-with deps = ("pkg-config", "ffmpeg", "xrandr", "Xorg")
-in foreach d in deps {
-        print(clr::Tfc.Yellow, "  ", d, clr::Te.Reset);
-        if !scr::program_exists(d) {
-                needed += [d];
-        } else {
-                println(clr::Tfc.Green, " [ok]", clr::Te.Reset);
-        }
-}
-
-if len(needed) > 0 {
-        deps_ok = false;
-        println(clr::Tfc.Red, "Dependencies {needed} is required for building awx", clr::Te.Reset);
-}
-
-needed = [];
-println(clr::Tfc.Yellow, "Checking headers...", clr::Te.Reset);
-with deps = ("libavcodec", "libavformat", "libavutil", "libswscale", "imlib2", "x11", "xrandr")
-in foreach d in deps {
-        print(clr::Tfc.Yellow, "  ", d, clr::Te.Reset);
-        $f"pkg-config {d} --exists && echo 1 || echo 0" |> let e;
-        if e != "1" {
-                needed += [d];
-        } else {
-                println(clr::Tfc.Green, " [ok]", clr::Te.Reset);
-        }
-}
-
-if len(needed) > 0 {
-        deps_ok = false;
-        println(clr::Tfc.Red, f"Headers {needed} are required for building awx", clr::Te.Reset);
-}
-
-if !deps_ok { exit(1); }
-
 let debug, install, uninstall = (false, false, false);
 try { debug = ("g", "ggdb", "debug", "d").contains(argv()[1]); }
 try { install = argv()[1] == "install"; }
 try { uninstall = argv()[1] == "uninstall"; }
+
+if !uninstall && !install {
+        let deps_ok = true;
+        let needed = [];
+        println(clr::Tfc.Yellow, "Checking dependencies...", clr::Te.Reset);
+        with deps = ("pkg-config", "ffmpeg", "xrandr", "Xorg")
+        in foreach d in deps {
+                print(clr::Tfc.Yellow, "  ", d, clr::Te.Reset);
+                if !scr::program_exists(d) {
+                        needed += [d];
+                } else {
+                        println(clr::Tfc.Green, " [ok]", clr::Te.Reset);
+                }
+        }
+
+        if len(needed) > 0 {
+                deps_ok = false;
+                println(clr::Tfc.Red, "Dependencies {needed} is required for building awx", clr::Te.Reset);
+        }
+
+        needed = [];
+        println(clr::Tfc.Yellow, "Checking headers...", clr::Te.Reset);
+        with deps = ("libavcodec", "libavformat", "libavutil", "libswscale", "imlib2", "x11", "xrandr")
+        in foreach d in deps {
+                print(clr::Tfc.Yellow, "  ", d, clr::Te.Reset);
+                $f"pkg-config {d} --exists && echo 1 || echo 0" |> let e;
+                if e != "1" {
+                        needed += [d];
+                } else {
+                        println(clr::Tfc.Green, " [ok]", clr::Te.Reset);
+                }
+        }
+
+        if len(needed) > 0 {
+                deps_ok = false;
+                println(clr::Tfc.Red, f"Headers {needed} are required for building awx", clr::Te.Reset);
+        }
+
+        if !deps_ok { exit(1); }
+}
 
 $"pkg-config --cflags libavcodec libavformat libavutil libswscale imlib2 x11 xrandr" |> let cflags;
 $"pkg-config --libs libavcodec libavformat libavutil libswscale imlib2 x11 xrandr" |> let ld;

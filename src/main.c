@@ -88,6 +88,7 @@ long get_time_us(void) {
 int display_frame(Context *ctx, uint8_t *data, int width, int height, int frame_count) {
         uint8_t *ximage_buffer = (uint8_t *)malloc(ctx->bgra_size);
         if (!ximage_buffer) {
+                syslog(LOG_ERR, "Failed to allocate XImage buffer for frame %d\n", frame_count);
                 fprintf(stderr, "Failed to allocate XImage buffer for frame %d\n", frame_count);
                 return -1;
         }
@@ -96,6 +97,7 @@ int display_frame(Context *ctx, uint8_t *data, int width, int height, int frame_
         XImage *ximage = XCreateImage(ctx->display, ctx->visual, ctx->depth, ZPixmap, 0, (char *)ximage_buffer,
                                       width, height, 32, width * 4);
         if (!ximage) {
+                syslog(LOG_ERR, "Failed to create XImage for frame %d\n", frame_count);
                 fprintf(stderr, "Failed to create XImage for frame %d\n", frame_count);
                 free(ximage_buffer);
                 return -1;
@@ -104,6 +106,7 @@ int display_frame(Context *ctx, uint8_t *data, int width, int height, int frame_
 
         Pixmap pixmap = XCreatePixmap(ctx->display, ctx->root, width, height, ctx->depth);
         if (!pixmap) {
+                syslog(LOG_ERR, "Failed to create pixmap for frame %d\n", frame_count);
                 fprintf(stderr, "Failed to create pixmap for frame %d\n", frame_count);
                 XDestroyImage(ximage);
                 return -1;
@@ -111,6 +114,7 @@ int display_frame(Context *ctx, uint8_t *data, int width, int height, int frame_
 
         GC gc = XCreateGC(ctx->display, pixmap, 0, NULL);
         if (!gc) {
+                syslog(LOG_ERR, "Failed to create GC for frame %d\n", frame_count);
                 fprintf(stderr, "Failed to create GC for frame %d\n", frame_count);
                 XFreePixmap(ctx->display, pixmap);
                 XDestroyImage(ximage);
@@ -118,6 +122,7 @@ int display_frame(Context *ctx, uint8_t *data, int width, int height, int frame_
         }
 
         if (XPutImage(ctx->display, pixmap, gc, ximage, 0, 0, 0, 0, width, height) != Success) {
+                syslog(LOG_ERR, "XPutImage failed for frame %d\n", frame_count);
                 fprintf(stderr, "XPutImage failed for frame %d\n", frame_count);
                 XFreeGC(ctx->display, gc);
                 XFreePixmap(ctx->display, pixmap);
@@ -151,6 +156,7 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         //Image *images = (Image *)malloc(1000 * sizeof(Image));
         dyn_array(Image, images);
         if (!images.data) {
+                syslog(LOG_ERR, "Failed to allocate image array\n");
                 fprintf(stderr, "Failed to allocate image array\n");
                 cleanup_context(&ctx);
                 return -1;
@@ -187,6 +193,7 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                                                 };
                                                 mem_usage += (double)ctx.bgra_size;
                                                 if (!img.data) {
+                                                        syslog(LOG_ERR, "Failed to allocate image data\n");
                                                         fprintf(stderr, "Failed to allocate image data\n");
                                                         break;
                                                 }
@@ -217,6 +224,7 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         while (1) {
                 Image *img = &images.data[i];
                 if (!img->data) {
+                        syslog(LOG_ERR, "Null image data for frame %d\n", i);
                         fprintf(stderr, "Null image data for frame %d\n", i);
                         i = (i + 1) % image_count;
                         continue;
@@ -279,6 +287,7 @@ void *producer_thread(void *arg) {
                         av_packet_unref(ctx->packet);
                         avcodec_flush_buffers(ctx->codec_ctx);
                         if (avformat_seek_file(ctx->fmt_ctx, ctx->video_stream_idx, INT64_MIN, 0, INT64_MAX, 0) < 0) {
+                                syslog(LOG_ERR, "Failed to seek to start of video\n");
                                 fprintf(stderr, "Failed to seek to start of video\n");
                                 td->done = 1;
                                 pthread_cond_broadcast(&td->threading.not_empty);
@@ -307,6 +316,7 @@ void *producer_thread(void *arg) {
                                                 if (!img->data) {
                                                         img->data = (uint8_t *)malloc(ctx->bgra_size);
                                                         if (!img->data) {
+                                                                syslog(LOG_ERR, "Failed to allocate buffer frame %d\n", frame_count);
                                                                 fprintf(stderr, "Failed to allocate buffer frame %d\n", frame_count);
                                                                 td->done = 1;
                                                                 pthread_cond_broadcast(&td->threading.not_empty);
@@ -396,6 +406,7 @@ int run_stream(int monitor_index, const char *video_mp4) {
         td.buffer_size = 2; // Small buffer to minimize memory
         td.buffer = (Image *)malloc(td.buffer_size * sizeof(Image));
         if (!td.buffer) {
+                syslog(LOG_ERR, "Failed to allocate thread buffer\n");
                 fprintf(stderr, "Failed to allocate thread buffer\n");
                 cleanup_context(&ctx);
                 return -1;
@@ -412,6 +423,7 @@ int run_stream(int monitor_index, const char *video_mp4) {
         // Create threads
         pthread_t producer, consumer;
         if (pthread_create(&producer, NULL, producer_thread, &td) != 0) {
+                syslog(LOG_ERR, "Failed to create producer thread\n");
                 fprintf(stderr, "Failed to create producer thread\n");
                 for (int i = 0; i < td.buffer_size; i++) {
                         if (td.buffer[i].data) free(td.buffer[i].data);
@@ -424,6 +436,7 @@ int run_stream(int monitor_index, const char *video_mp4) {
                 return -1;
         }
         if (pthread_create(&consumer, NULL, consumer_thread, &td) != 0) {
+                syslog(LOG_ERR, "Failed to create consumer thread\n");
                 fprintf(stderr, "Failed to create consumer thread\n");
                 td.done = 1;
                 pthread_cond_broadcast(&td.threading.not_empty);
@@ -738,6 +751,7 @@ void send_msg(char **msg, size_t len) {
         int fd = open(FIFO_PATH, O_WRONLY | O_NONBLOCK);
         if (fd < 0) {
                 if (errno == ENXIO) {
+                        syslog(LOG_ERR, "No process is reading from FIFO %s\n", FIFO_PATH);
                         fprintf(stderr, "No process is reading from FIFO %s\n", FIFO_PATH);
                 } else {
                         perror("open");
