@@ -9,14 +9,14 @@ import "std/script.rl"; as scr
 
 set_flag("-xe");
 
-println(clr::Te.Bold, "======= ", clr::Tfc.Green, "Building awx", clr::Te.Reset, clr::Te.Bold, " =======", clr::Te.Reset);
-
 let debug, install, uninstall = (false, false, false);
 try { debug = ("g", "ggdb", "debug", "d").contains(argv()[1]); }
 try { install = argv()[1] == "install"; }
 try { uninstall = argv()[1] == "uninstall"; }
 
 if !uninstall && !install {
+        println(clr::Te.Bold, "======= ", clr::Tfc.Green, "Building awx", clr::Te.Reset, clr::Te.Bold, " =======", clr::Te.Reset);
+
         let deps_ok = true;
         let needed = [];
         println(clr::Tfc.Yellow, "Checking dependencies...", clr::Te.Reset);
@@ -89,6 +89,6 @@ if install {
         } else {
                 $f"{cc} {ccomb_flags} {cname} {cfiles}";
         }
+        println(clr::Te.Bold, "======= ", clr::Tfc.Green, "Done", clr::Te.Reset, clr::Te.Bold, " =======", clr::Te.Reset);
 }
 
-println(clr::Te.Bold, "======= ", clr::Tfc.Green, "Done", clr::Te.Reset, clr::Te.Bold, " =======", clr::Te.Reset);
