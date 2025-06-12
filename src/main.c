@@ -1,4 +1,5 @@
 // glibc
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,12 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <syslog.h>
+
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/file.h>
+#include <string.h>
+#include <errno.h>
 
 // FFmpeg
 #include <libavcodec/avcodec.h>
@@ -30,6 +37,10 @@
 #include "dyn_array.h"
 #define CLAP_IMPL
 #include "clap.h"
+
+#define FIFO_PATH "/tmp/awx.fifo"
+#define LOG_PATH "/tmp/log/awx.log"
+#define PID_PATH "/tmp/awx.pid"
 
 typedef enum {
         MODE_LOAD = 0,
@@ -55,6 +66,8 @@ typedef struct {
         int width, height; // Frame dimensions
         int size; // Size of data (width * height * 4 for BGRA)
 } Image;
+
+static int g_pid_fd;
 
 // Threading data for streaming mode
 typedef struct {
@@ -449,48 +462,179 @@ int run_stream(int monitor_index, const char *video_mp4) {
 static void daemonize(void) {
         pid_t pid, sid;
 
-        if ((pid = fork()) < 0) { exit(1); }
-        if (pid > 0)            { exit(0); }
-
-        if ((sid = setsid()) < 0) {
-                perror("setsid");
-                exit(1);
+        // First fork
+        if ((pid = fork()) < 0) {
+                perror("fork");
+                exit(EXIT_FAILURE);
+        }
+        if (pid > 0) {
+                // Parent exits
+                exit(EXIT_SUCCESS);
         }
 
-        // Fork again (avoid terminal acquisition)
-        if ((pid = fork()) < 0) { exit(1); }
-        if (pid > 0)            { exit(0); }
+        // Become session leader
+        if ((sid = setsid()) < 0) {
+                perror("setsid");
+                exit(EXIT_FAILURE);
+        }
 
-        if (chdir("/") < 0) { exit(1); }
+        // Second fork (prevent reacquiring terminal)
+        if ((pid = fork()) < 0) {
+                perror("fork");
+                exit(EXIT_FAILURE);
+        }
+        if (pid > 0) {
+                exit(EXIT_SUCCESS);
+        }
 
-        // Reset file creation mask.
+        // Set file permissions and working dir
         umask(0);
+        if (chdir("/") < 0) {
+                perror("chdir");
+                exit(EXIT_FAILURE);
+        }
 
+        // Close standard file descriptors
         close(STDIN_FILENO);
         close(STDOUT_FILENO);
         close(STDERR_FILENO);
 
-        // Redirect file descriptors.
+        // Redirect std streams to /dev/null
         open("/dev/null", O_RDWR); // stdin
-        dup(0);                    // stdout
-        dup(0);                    // stderr
+        int _ =dup(0);                    // stdout
+        _ = dup(0);                    // stderr
+
+
+        // Open PID file
+        g_pid_fd = open(PID_PATH, O_RDWR | O_CREAT, 0640);
+        if (g_pid_fd < 0) {
+                // Cannot open
+                exit(EXIT_FAILURE);
+        }
+
+        // Try to lock the file
+        if (flock(g_pid_fd, LOCK_EX | LOCK_NB) < 0) {
+                // Already locked: another instance running
+                perror("flock");
+                close(g_pid_fd);
+                exit(EXIT_FAILURE);
+        }
+
+        // Write PID
+        if (ftruncate(g_pid_fd, 0) != 0) {
+                perror("ftruncate");
+                close(g_pid_fd);
+                exit(EXIT_FAILURE);
+        }
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%d\n", getpid());
+        if (write(g_pid_fd, buf, strlen(buf)) < 0) {
+                perror("write");
+                close(g_pid_fd);
+                exit(EXIT_FAILURE);
+        }
+
+        // Note: don't close pid_fd — keep it open to hold the lock
 }
+
+/* static void daemonize(void) { */
+/*         pid_t pid, sid; */
+
+/*         if ((pid = fork()) < 0) { exit(1); } */
+/*         if (pid > 0)            { exit(0); } */
+
+/*         if ((sid = setsid()) < 0) { */
+/*                 perror("setsid"); */
+/*                 exit(1); */
+/*         } */
+
+/*         // Fork again (avoid terminal acquisition) */
+/*         if ((pid = fork()) < 0) { exit(1); } */
+/*         if (pid > 0)            { exit(0); } */
+
+/*         if (chdir("/") < 0) { exit(1); } */
+
+/*         // Reset file creation mask. */
+/*         umask(0); */
+
+/*         close(STDIN_FILENO); */
+/*         close(STDOUT_FILENO); */
+/*         close(STDERR_FILENO); */
+
+/*         // Redirect file descriptors. */
+/*         open("/dev/null", O_RDWR);         // stdin */
+/*         int _ = dup(0);                    // stdout */
+/*         _     = dup(0);                    // stderr */
+/* } */
 
 static void signal_handler(int sig) {
         if (sig == SIGTERM) {
                 syslog(LOG_INFO, "Received SIGTERM, shutting down.");
                 closelog();
+
+                unlink(PID_PATH);
+                if (g_pid_fd >= 0) { close(g_pid_fd); }
+
                 exit(0);
         }
 }
 
-void usage(void) {
+static void usage(void) {
         printf("awx <walpaper_filepath> [options...]\n");
         printf("Options:\n");
         printf("    -%c, --%s[=<flag>|*]      display this message or get help on individual flags or all (*)\n", FLAG_1HY_HELP, FLAG_2HY_HELP);
         printf("        --%s=<int>            set the display monitor or (-1) to combine all monitors into one single monitor\n", FLAG_2HY_MON);
         printf("        --%s=<stream|load>   set the frame generation mode\n", FLAG_2HY_MODE);
         printf("        --%s=<float>       set a maximum memory limit for --mode=load\n", FLAG_2HY_MAXMEM);
+}
+
+static void daemon_loop(void) {
+        daemonize();
+        openlog("awx", LOG_PID | LOG_CONS, LOG_DAEMON);
+        signal(SIGTERM, signal_handler);
+
+        if (mkfifo(FIFO_PATH, 0666) < 0 && errno != EEXIST) {
+                syslog(LOG_ERR, "Failed to create FIFO %s: %s", FIFO_PATH, strerror(errno));
+                exit(EXIT_FAILURE);
+        }
+
+        while (1) {
+                if (g_config.wp && g_config.mode == MODE_STREAM) {
+                        (void)run_stream(g_config.mon, g_config.wp);
+                } else if (g_config.wp && g_config.mode == MODE_LOAD) {
+                        (void)run_load_all(g_config.mon, g_config.wp);
+                } else {
+                        FILE *log = fopen(LOG_PATH, "a");
+                        if (log) {
+                                time_t now = time(NULL);
+                                char *time_str = ctime(&now);
+                                time_str[strlen(time_str) - 1] = '\0';
+                                fprintf(log, "[%s] Waiting...\n", time_str);
+                                fclose(log);
+                        }
+                        sleep(3);
+                }
+        }
+
+        free(g_config.wp);
+        closelog();
+}
+
+static int daemon_running(void) {
+        FILE *f = fopen(PID_PATH, "r");
+
+        if (!f) return 0;
+
+        pid_t pid;
+
+        if (fscanf(f, "%d", &pid) != 1) {
+                fclose(f);
+                return 0;
+        }
+
+        fclose(f);
+
+        return kill(pid, 0) == 0;
 }
 
 int main(int argc, char *argv[]) {
@@ -507,6 +651,8 @@ int main(int argc, char *argv[]) {
                                 usage();
                         }
                         exit(0);
+                } else if (arg.hyphc == 1 && arg.start[0] == FLAG_1HY_DAEMON) {
+                        g_config.flags |= FT_DAEMON;
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_HELP)) {
                         if (arg.eq) {
                                 dump_flag_info(arg.eq);
@@ -542,6 +688,8 @@ int main(int argc, char *argv[]) {
                         }
                         g_config.maxmem = strtod(arg.eq, NULL);
                         g_config.flags |= FT_MAXMEM;
+                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_DAEMON)) {
+                        g_config.flags |= FT_DAEMON;
                 }
                 else if (arg.hyphc == 0) {
                         if (g_config.wp) {
@@ -554,26 +702,28 @@ int main(int argc, char *argv[]) {
         }
 
         if (!g_config.wp) {
-                err("Wallpaper filepath is not set");
+                //err("Wallpaper filepath is not set");
         }
 
-        printf("Wallpaper filepath: %s\n", g_config.wp);
-        printf("Monitor: %d %s\n", g_config.mon, g_config.mon == -1 ? "[Stretch]" : "");
-        printf("Mode: %s\n", g_config.mode == MODE_LOAD ? "load" : "stream");
-        if (g_config.flags & FT_MAXMEM) {
-                if (g_config.maxmem < 0) {
-                        err_wargs("The maximum memory you entered (%f) must be > 0.0", g_config.maxmem);
+        if (g_config.flags & FT_DAEMON) {
+                printf("Wallpaper filepath: %s\n", g_config.wp);
+                printf("Monitor: %d %s\n", g_config.mon, g_config.mon == -1 ? "[Stretch]" : "");
+                printf("Mode: %s\n", g_config.mode == MODE_LOAD ? "load" : "stream");
+                if (g_config.flags & FT_MAXMEM) {
+                        if (g_config.maxmem < 0) {
+                                err_wargs("The maximum memory you entered (%f) must be > 0.0", g_config.maxmem);
+                        }
+                        printf("Maximum Memory Allowed: %fGB\n", g_config.maxmem);
                 }
-                printf("Maximum Memory Allowed: %fGB\n", g_config.maxmem);
-        }
 
-        if (g_config.mode == MODE_STREAM) {
-                return run_stream(g_config.mon, g_config.wp);
+                daemon_loop();
         } else {
-                return run_load_all(g_config.mon, g_config.wp);
+                // sending message
+                if (!daemon_running()) {
+                        err("awx daemon is not running, start with (-d | --daemon)");
+                }
+                printf("sent message\n");
         }
-
-        free(g_config.wp);
 
         return 0;
 }
