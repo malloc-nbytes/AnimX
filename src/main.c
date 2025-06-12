@@ -706,6 +706,10 @@ int main(int argc, char *argv[]) {
         }
 
         if (g_config.flags & FT_DAEMON) {
+                if (daemon_running()) {
+                        err("awx daemon is already running");
+                }
+
                 printf("Wallpaper filepath: %s\n", g_config.wp);
                 printf("Monitor: %d %s\n", g_config.mon, g_config.mon == -1 ? "[Stretch]" : "");
                 printf("Mode: %s\n", g_config.mode == MODE_LOAD ? "load" : "stream");
