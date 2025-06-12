@@ -1,3 +1,4 @@
+// glibc
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,16 +6,24 @@
 #include <time.h>
 #include <pthread.h>
 #include <limits.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <syslog.h>
 
+// FFmpeg
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/imgutils.h>
 #include <libswscale/swscale.h>
+
+// X
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/Xrandr.h>
 #include <X11/Xatom.h>
 
+// Local
 #include "context.h"
 #include "flag.h"
 #include "utils.h"
@@ -167,9 +176,9 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                                                 sws_scale(ctx.sws_ctx, (const uint8_t * const *)ctx.frame->data, ctx.frame->linesize, 0, ctx.codec_ctx->height,
                                                           ctx.bgra_frame->data, ctx.bgra_frame->linesize);
                                                 Image img = (Image){
-                                                        .width = ctx.monitor_width,
-                                                        .height = ctx.monitor_height,
                                                         .data = (uint8_t *)malloc(ctx.bgra_size),
+                                                        .width = (int)ctx.monitor_width,
+                                                        .height = (int)ctx.monitor_height,
                                                 };
                                                 mem_usage += (double)ctx.bgra_size;
                                                 if (!img.data) {
@@ -435,6 +444,44 @@ int run_stream(int monitor_index, const char *video_mp4) {
         pthread_cond_destroy(&td.threading.not_empty);
         cleanup_context(&ctx);
         return 0;
+}
+
+static void daemonize(void) {
+        pid_t pid, sid;
+
+        if ((pid = fork()) < 0) { exit(1); }
+        if (pid > 0)            { exit(0); }
+
+        if ((sid = setsid()) < 0) {
+                perror("setsid");
+                exit(1);
+        }
+
+        // Fork again (avoid terminal acquisition)
+        if ((pid = fork()) < 0) { exit(1); }
+        if (pid > 0)            { exit(0); }
+
+        if (chdir("/") < 0) { exit(1); }
+
+        // Reset file creation mask.
+        umask(0);
+
+        close(STDIN_FILENO);
+        close(STDOUT_FILENO);
+        close(STDERR_FILENO);
+
+        // Redirect file descriptors.
+        open("/dev/null", O_RDWR); // stdin
+        dup(0);                    // stdout
+        dup(0);                    // stderr
+}
+
+static void signal_handler(int sig) {
+        if (sig == SIGTERM) {
+                syslog(LOG_INFO, "Received SIGTERM, shutting down.");
+                closelog();
+                exit(0);
+        }
 }
 
 void usage(void) {
