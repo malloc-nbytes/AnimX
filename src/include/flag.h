@@ -8,7 +8,7 @@
 #define FLAG_2HY_MON "mon"
 #define FLAG_2HY_MODE "mode"
 #define FLAG_2HY_MAXMEM "maxmem"
-#define FLAG_2HY_DAEMON "damon"
+#define FLAG_2HY_DAEMON "daemon"
 #define FLAG_2HY_STOP "stop"
 
 typedef enum {

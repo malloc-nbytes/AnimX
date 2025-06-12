@@ -65,6 +65,31 @@ static void maxmem_info(void) {
         printf("        awx --maxmem=2.1234\n");
 }
 
+static void daemon_info(void) {
+        printf("--help(%c, %s):\n", FLAG_1HY_DAEMON, FLAG_2HY_DAEMON);
+        printf("    Launch the deamon. If you do not provide any information\n");
+        printf("    to awx when launching the daemon, it will wait until\n");
+        printf("    you send a signal to it. Issue the `--kill` flag to stop it.\n\n");
+        printf("    Note:\n");
+        printf("        1. You can see logging information in `/var/log/syslog`.\n");
+        printf("        2. A FIFO file and PID file are created in `/tmp/`.\n\n");
+        printf("    Example:\n");
+        printf("        awx -d                                     # starts the daemon, does nothing noticable\n");
+        printf("        awx /home/user/vids/vid.mp4 --mon=1        # the daemon will use this information\n");
+        printf("        awx --mode=load                            # the daemon will use this information\n");
+        printf("        awx /home/user/vids/vid2.mp4               # the daemon will use this information\n");
+        printf("        awx --stop                                 # kill daemon\n");
+        printf("        awx -d /home/user/vids/vid.mp4 --mode=load # daemon will start with this information\n");
+}
+
+static void stop_info(void) {
+        printf("--help(%s):\n", FLAG_2HY_STOP);
+        printf("    Stop the daemon. If it is not running, this flag does nothing.\n");
+        printf("    Example:\n");
+        printf("        awx --deamon\n");
+        printf("        awx --stop\n");
+}
+
 void dump_flag_info(const char *name) {
         if (*name == '-') {
                 err_wargs("no known help infomation for `%s`, do not include hyphens `-`", name);
@@ -74,6 +99,8 @@ void dump_flag_info(const char *name) {
                 mon_info,
                 mode_info,
                 maxmem_info,
+                daemon_info,
+                stop_info,
         };
 
 #define OHYEQ(n, flag, actual) ((n) == 1 && (flag)[0] == (actual))
@@ -86,6 +113,10 @@ void dump_flag_info(const char *name) {
                 infos[2]();
         } else if (!strcmp(name, FLAG_2HY_MAXMEM)) {
                 infos[3]();
+        } else if (OHYEQ(n, name, FLAG_1HY_DAEMON) || !strcmp(name, FLAG_2HY_DAEMON)) {
+                infos[4]();
+        } else if (!strcmp(name, FLAG_2HY_STOP)) {
+                infos[5]();
         } else if (OHYEQ(n, name, '*')) {
                 for (size_t i = 0; i < sizeof(infos)/sizeof(*infos); ++i) {
                         if (i != 0) putchar('\n');

@@ -762,10 +762,11 @@ static void usage(void) {
         printf("awx <walpaper_filepath> [options...]\n");
         printf("Options:\n");
         printf("    -%c, --%s[=<flag>|*]      display this message or get help on individual flags or all (*)\n", FLAG_1HY_HELP, FLAG_2HY_HELP);
+        printf("    -%c, --%s               start the daemon\n", FLAG_1HY_DAEMON, FLAG_2HY_DAEMON);
         printf("        --%s=<int>            set the display monitor or (-1) to combine all monitors into one single monitor\n", FLAG_2HY_MON);
         printf("        --%s=<stream|load>   set the frame generation mode\n", FLAG_2HY_MODE);
         printf("        --%s=<float>       set a maximum memory limit for --mode=load\n", FLAG_2HY_MAXMEM);
-        printf("        --%s                  stop the running daemon\n", FLAG_2HY_STOP);
+        printf("        --%s                 stop the running the daemon\n", FLAG_2HY_STOP);
 }
 
 static void parse_daemon_sender_msg(const char *msg) {
@@ -852,6 +853,8 @@ static void parse_daemon_sender_msg(const char *msg) {
 }
 
 static void daemon_loop(void) {
+        printf("starting daemon, do `tail -f /var/log/syslog` to see logging\n");
+
         daemonize();
         openlog("awx", LOG_PID | LOG_CONS, LOG_DAEMON);
         signal(SIGTERM, signal_handler);
@@ -866,6 +869,23 @@ static void daemon_loop(void) {
         Worker_Data wd;
         init_worker_data(&wd);
 
+        // Apply initial configuration if available
+        pthread_mutex_lock(&wd.mutex);
+        if (g_config.wp) {
+                wd.wp = strdup(g_config.wp);
+                wd.mon = g_config.mon;
+                wd.mode = g_config.mode;
+                wd.maxmem = g_config.maxmem;
+                wd.running = 1;
+                if (pthread_create(&wd.thread, NULL, worker_thread, &wd) != 0) {
+                        syslog(LOG_ERR, "Failed to create initial worker thread");
+                        wd.running = 0;
+                } else {
+                        syslog(LOG_INFO, "Started initial worker with wp=%s, mon=%d, mode=%d", wd.wp, wd.mon, (int)wd.mode);
+                }
+        }
+        pthread_mutex_unlock(&wd.mutex);
+
         pthread_t fifo_reader;
         if (pthread_create(&fifo_reader, NULL, fifo_reader_thread, &wd) != 0) {
                 syslog(LOG_ERR, "Failed to create FIFO reader thread");
@@ -876,6 +896,27 @@ static void daemon_loop(void) {
         }
 
         pthread_join(fifo_reader, NULL);
+
+        // Cleanup
+        pthread_mutex_lock(&wd.mutex);
+        if (wd.running) {
+                wd.stop = 1;
+                if (wd.mode == MODE_STREAM && wd.td) {
+                        pthread_mutex_lock(&wd.td->threading.mutex);
+                        wd.td->done = 1;
+                        pthread_cond_broadcast(&wd.td->threading.not_empty);
+                        pthread_cond_broadcast(&wd.td->threading.not_full);
+                        pthread_mutex_unlock(&wd.td->threading.mutex);
+                }
+                while (wd.running) {
+                        pthread_cond_wait(&wd.cond, &wd.mutex);
+                }
+                if (wd.thread) {
+                        pthread_join(wd.thread, NULL);
+                        wd.thread = 0;
+                }
+        }
+        pthread_mutex_unlock(&wd.mutex);
 
         cleanup_worker_data(&wd);
         free(g_config.wp);
@@ -1050,7 +1091,7 @@ int main(int argc, char *argv[]) {
 
                 }
                 send_msg(orig_argv, orig_argc);
-                printf("sent message\n");
+                printf("sent configuration to daemon, applying changes...\n");
         }
 
         return 0;
