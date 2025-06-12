@@ -67,15 +67,17 @@ $"pkg-config --libs libavcodec libavformat libavutil libswscale imlib2 x11 xrand
                 return !sys::isdir(f) && !("./awx", "./build.rl").contains(f);
         }));
 
-println(f"cc={cc}");
-println(f"cname={cname}");
-println(f"cfiles={cfiles}");
-println(f"cflags={cflags}");
-println(f"ld={ld}");
-println(f"ccomb_flags={ccomb_flags}");
-println(f"debug={debug}");
-println(f"install={install}");
-println(f"uninstall={uninstall}");
+if !uninstall && !install {
+        println(f"cc={cc}");
+        println(f"cname={cname}");
+        println(f"cfiles={cfiles}");
+        println(f"cflags={cflags}");
+        println(f"ld={ld}");
+        println(f"ccomb_flags={ccomb_flags}");
+        println(f"debug={debug}");
+        println(f"install={install}");
+        println(f"uninstall={uninstall}");
+}
 
 if install {
         $"sudo cp ./awx /usr/local/bin/awx";
