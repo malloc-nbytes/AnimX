@@ -102,6 +102,51 @@ static void init_thread_specific(void) {
         pthread_key_create(&worker_data_key, NULL);
 }
 
+static int is_single_frame(Context *ctx) {
+        // Check if the input is likely an image (single frame)
+        // Images typically have a duration of 0 or a single frame
+        if (ctx->fmt_ctx->duration != AV_NOPTS_VALUE && ctx->fmt_ctx->duration <= AV_TIME_BASE) {
+                return 1; // Duration <= 1 second, likely an image
+        }
+
+        // Alternatively, try decoding to count frames
+        AVPacket *packet = av_packet_alloc();
+        if (!packet) {
+                syslog(LOG_ERR, "Failed to allocate packet for frame count");
+                return 0;
+        }
+
+        int frame_count = 0;
+        int video_stream_idx = ctx->video_stream_idx;
+
+        // Save format context position
+        int64_t start_pos = avio_tell(ctx->fmt_ctx->pb);
+        avformat_seek_file(ctx->fmt_ctx, video_stream_idx, INT64_MIN, 0, INT64_MAX, 0);
+
+        while (av_read_frame(ctx->fmt_ctx, packet) >= 0) {
+                if (packet->stream_index == video_stream_idx) {
+                        if (avcodec_send_packet(ctx->codec_ctx, packet) >= 0) {
+                                while (avcodec_receive_frame(ctx->codec_ctx, ctx->frame) >= 0) {
+                                        frame_count++;
+                                        if (frame_count > 1) {
+                                                av_packet_unref(packet);
+                                                // Restore format context position
+                                                avformat_seek_file(ctx->fmt_ctx, video_stream_idx, INT64_MIN, start_pos, INT64_MAX, 0);
+                                                av_packet_free(&packet);
+                                                return 0; // More than one frame, not an image
+                                        }
+                                }
+                        }
+                }
+                av_packet_unref(packet);
+        }
+
+        // Restore format context position
+        avformat_seek_file(ctx->fmt_ctx, video_stream_idx, INT64_MIN, start_pos, INT64_MAX, 0);
+        av_packet_free(&packet);
+        return frame_count == 1;
+}
+
 static void init_worker_data(Worker_Data *wd) {
         wd->thread = 0;
         pthread_mutex_init(&wd->mutex, NULL);
@@ -235,13 +280,42 @@ int display_frame(Context *ctx, uint8_t *data, int width, int height, int frame_
 }
 
 int run_load_all(int monitor_index, const char *video_mp4) {
-        Worker_Data *wd = pthread_getspecific(worker_data_key); // Assume a thread-specific key for Worker_Data
+        Worker_Data *wd = pthread_getspecific(worker_data_key);
         Context ctx = {0};
         if (init_context(&ctx, monitor_index, video_mp4) < 0) {
                 cleanup_context(&ctx);
                 return -1;
         }
 
+        // Check if input is a single frame
+        int single_frame = is_single_frame(&ctx);
+        if (single_frame) {
+                // Read and display single frame
+                int frame_count = 0;
+                while (av_read_frame(ctx.fmt_ctx, ctx.packet) >= 0) {
+                        if (ctx.packet->stream_index == ctx.video_stream_idx) {
+                                if (avcodec_send_packet(ctx.codec_ctx, ctx.packet) >= 0) {
+                                        while (avcodec_receive_frame(ctx.codec_ctx, ctx.frame) >= 0) {
+                                                sws_scale(ctx.sws_ctx, (const uint8_t * const *)ctx.frame->data, ctx.frame->linesize, 0, ctx.codec_ctx->height,
+                                                          ctx.bgra_frame->data, ctx.bgra_frame->linesize);
+                                                if (display_frame(&ctx, ctx.bgra_buffer, ctx.monitor_width, ctx.monitor_height, frame_count) < 0) {
+                                                        syslog(LOG_ERR, "Failed to display single frame");
+                                                        fprintf(stderr, "Failed to display single frame\n");
+                                                } else {
+                                                        printf("Displayed single frame\n");
+                                                }
+                                                frame_count++;
+                                                break; // Only process one frame
+                                        }
+                                }
+                        }
+                        av_packet_unref(ctx.packet);
+                }
+                cleanup_context(&ctx);
+                return single_frame; // Return 1 to indicate single frame
+        }
+
+        // Existing multi-frame logic
         dyn_array(Image, images);
         if (!images.data) {
                 syslog(LOG_ERR, "Failed to allocate image array\n");
@@ -256,7 +330,6 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         size_t loading_i = 0;
         double mem_usage = 0;
 
-        // Load all frames
         while (av_read_frame(ctx.fmt_ctx, ctx.packet) >= 0) {
                 pthread_mutex_lock(&wd->mutex);
                 if (wd->stop) {
@@ -311,7 +384,6 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         printf("Loaded %d frames at %ldx%ld (BGRA)\n", image_count, ctx.monitor_width, ctx.monitor_height);
         sleep(1);
 
-        // Display loop
         int i = 0;
         while (1) {
                 pthread_mutex_lock(&wd->mutex);
@@ -351,13 +423,12 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                 i = (i + 1) % image_count;
         }
 
-        // Cleanup
         for (int i = 0; i < image_count; i++) {
                 if (images.data[i].data) free(images.data[i].data);
         }
         dyn_array_free(images);
         cleanup_context(&ctx);
-        return 0;
+        return 0; // Multi-frame case
 }
 
 // Producer thread: decodes and scales frames
@@ -564,7 +635,7 @@ static void cleanup_thread_data(Thread_Data *td) {
 }
 
 int run_stream(int monitor_index, const char *video_mp4) {
-        Worker_Data *wd = pthread_getspecific(worker_data_key); // Assume a thread-specific key
+        Worker_Data *wd = pthread_getspecific(worker_data_key);
         syslog(LOG_INFO, "run_stream()");
         Context ctx = {0};
         if (init_context(&ctx, monitor_index, video_mp4) < 0) {
@@ -573,7 +644,35 @@ int run_stream(int monitor_index, const char *video_mp4) {
                 return -1;
         }
 
-        // Initialize threading data
+        // Check if input is a single frame
+        int single_frame = is_single_frame(&ctx);
+        if (single_frame) {
+                // Read and display single frame
+                int frame_count = 0;
+                while (av_read_frame(ctx.fmt_ctx, ctx.packet) >= 0) {
+                        if (ctx.packet->stream_index == ctx.video_stream_idx) {
+                                if (avcodec_send_packet(ctx.codec_ctx, ctx.packet) >= 0) {
+                                        while (avcodec_receive_frame(ctx.codec_ctx, ctx.frame) >= 0) {
+                                                sws_scale(ctx.sws_ctx, (const uint8_t * const *)ctx.frame->data, ctx.frame->linesize, 0, ctx.codec_ctx->height,
+                                                          ctx.bgra_frame->data, ctx.bgra_frame->linesize);
+                                                if (display_frame(&ctx, ctx.bgra_buffer, ctx.monitor_width, ctx.monitor_height, frame_count) < 0) {
+                                                        syslog(LOG_ERR, "Failed to display single frame");
+                                                        fprintf(stderr, "Failed to display single frame\n");
+                                                } else {
+                                                        printf("Displayed single frame\n");
+                                                }
+                                                frame_count++;
+                                                break; // Only process one frame
+                                        }
+                                }
+                        }
+                        av_packet_unref(ctx.packet);
+                }
+                cleanup_context(&ctx);
+                return single_frame; // Return 1 to indicate single frame
+        }
+
+        // Existing multi-frame logic
         Thread_Data td = {0};
         td.ctx = &ctx;
         td.buffer_size = 2;
@@ -593,12 +692,10 @@ int run_stream(int monitor_index, const char *video_mp4) {
         pthread_cond_init(&td.threading.not_empty, NULL);
         td.done = 0;
 
-        // Store Thread_Data in Worker_Data
         pthread_mutex_lock(&wd->mutex);
         wd->td = &td;
         pthread_mutex_unlock(&wd->mutex);
 
-        // Create threads
         pthread_t producer, consumer;
         if (pthread_create(&producer, NULL, producer_thread, &td) != 0) {
                 syslog(LOG_ERR, "Failed to create producer thread\n");
@@ -627,14 +724,13 @@ int run_stream(int monitor_index, const char *video_mp4) {
         pthread_join(producer, NULL);
         pthread_join(consumer, NULL);
 
-        // Clear Thread_Data from Worker_Data
         pthread_mutex_lock(&wd->mutex);
         wd->td = NULL;
         pthread_mutex_unlock(&wd->mutex);
 
         cleanup_thread_data(&td);
         cleanup_context(&ctx);
-        return 0;
+        return 0; // Multi-frame case
 }
 
 static void daemonize(void) {
@@ -1034,7 +1130,7 @@ int main(int argc, char *argv[]) {
                         } else {
                                 err_wargs("--mode expects either `stream` or `load`, not `%s`", arg.eq);
                         }
-                }  else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_STOP)) {
+                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_STOP)) {
                         stop_daemon();
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_MAXMEM)) {
                         if (!arg.eq) {
@@ -1047,8 +1143,7 @@ int main(int argc, char *argv[]) {
                         g_config.flags |= FT_MAXMEM;
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_DAEMON)) {
                         g_config.flags |= FT_DAEMON;
-                }
-                else if (arg.hyphc == 0) {
+                } else if (arg.hyphc == 0) {
                         if (g_config.wp) {
                                 err_wargs("only one wallpaper is allowed, already have: %s", g_config.wp);
                         }
@@ -1076,19 +1171,25 @@ int main(int argc, char *argv[]) {
 
                 daemon_loop();
         } else {
-                // sending message
+                // Sending message
                 if (!daemon_running()) {
                         if (!g_config.wp) {
                                 err("Wallpaper filepath is not set");
                         }
 
-                        //err("awx daemon is not running, start with (-d | --daemon)");
+                        int result = 0;
                         if (g_config.mode == MODE_STREAM) {
-                                (void)run_stream(g_config.mon, g_config.wp);
+                                result = run_stream(g_config.mon, g_config.wp);
                         } else if (g_config.mode == MODE_LOAD) {
-                                (void)run_load_all(g_config.mon, g_config.wp);
+                                result = run_load_all(g_config.mon, g_config.wp);
                         }
 
+                        // If single frame and not in daemon mode, exit
+                        if (result == 1) {
+                                printf("Applied single-frame image, exiting\n");
+                                free(g_config.wp);
+                                exit(EXIT_SUCCESS);
+                        }
                 }
                 send_msg(orig_argv, orig_argc);
                 printf("sent configuration to daemon, applying changes...\n");
