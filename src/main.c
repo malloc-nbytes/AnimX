@@ -61,6 +61,9 @@ typedef struct {
 
 static int g_pid_fd;
 
+// Thread-specific key for Worker_Data
+static pthread_key_t worker_data_key;
+
 // Threading data for streaming mode
 typedef struct {
         Context *ctx;
@@ -76,6 +79,92 @@ typedef struct {
         } threading;
         int done;        // Flag to signal threads to exit
 } Thread_Data;
+
+typedef struct {
+        pthread_t thread;        // Worker thread handle
+        pthread_mutex_t mutex;   // Mutex for worker state
+        pthread_cond_t cond;     // Condition variable for signaling worker start/stop
+        int running;            // Flag indicating if worker is running
+        int stop;               // Flag to signal worker to stop
+        char *wp;               // Current wallpaper path
+        int mon;                // Current monitor index
+        Mode_Type mode;         // Current mode
+        double maxmem;          // Current max memory (for MODE_LOAD)
+        Thread_Data *td;        // Pointer to Thread_Data for run_stream
+} Worker_Data;
+
+int run_stream(int monitor_index, const char *video_mp4);
+int run_load_all(int monitor_index, const char *video_mp4);
+static void parse_daemon_sender_msg(const char *msg);
+
+// Initialize thread-specific key
+static void init_thread_specific(void) {
+        pthread_key_create(&worker_data_key, NULL);
+}
+
+static void init_worker_data(Worker_Data *wd) {
+        wd->thread = 0;
+        pthread_mutex_init(&wd->mutex, NULL);
+        pthread_cond_init(&wd->cond, NULL);
+        wd->running = 0;
+        wd->stop = 0;
+        wd->wp = NULL;
+        wd->mon = -1;
+        wd->mode = MODE_STREAM;
+        wd->maxmem = 0.f;
+        wd->td = NULL;
+}
+
+static void cleanup_worker_data(Worker_Data *wd) {
+        if (wd->wp) free(wd->wp);
+        pthread_mutex_destroy(&wd->mutex);
+        pthread_cond_destroy(&wd->cond);
+        wd->td = NULL; // Thread_Data is cleaned up in run_stream
+}
+
+void *worker_thread(void *arg) {
+        Worker_Data *wd = (Worker_Data *)arg;
+        pthread_setspecific(worker_data_key, wd); // Set thread-specific data
+        while (1) {
+                pthread_mutex_lock(&wd->mutex);
+                while (!wd->running && !wd->stop) {
+                        pthread_cond_wait(&wd->cond, &wd->mutex);
+                }
+                if (wd->stop) {
+                        wd->running = 0;
+                        pthread_mutex_unlock(&wd->mutex);
+                        break;
+                }
+                pthread_mutex_unlock(&wd->mutex);
+
+                char *wp = NULL;
+                int mon;
+                Mode_Type mode;
+                double maxmem;
+                pthread_mutex_lock(&wd->mutex);
+                if (wd->wp) wp = strdup(wd->wp);
+                mon = wd->mon;
+                mode = wd->mode;
+                maxmem = wd->maxmem;
+                pthread_mutex_unlock(&wd->mutex);
+
+                if (mode == MODE_STREAM) {
+                        syslog(LOG_INFO, "Worker: Starting run_stream with wp=%s, mon=%d", wp ? wp : "(null)", mon);
+                        run_stream(mon, wp);
+                } else if (mode == MODE_LOAD) {
+                        syslog(LOG_INFO, "Worker: Starting run_load_all with wp=%s, mon=%d, maxmem=%f", wp ? wp : "(null)", mon, maxmem);
+                        run_load_all(mon, wp);
+                }
+
+                free(wp);
+
+                pthread_mutex_lock(&wd->mutex);
+                wd->running = 0;
+                pthread_cond_signal(&wd->cond);
+                pthread_mutex_unlock(&wd->mutex);
+        }
+        return NULL;
+}
 
 // Current time in microseconds
 long get_time_us(void) {
@@ -146,14 +235,13 @@ int display_frame(Context *ctx, uint8_t *data, int width, int height, int frame_
 }
 
 int run_load_all(int monitor_index, const char *video_mp4) {
+        Worker_Data *wd = pthread_getspecific(worker_data_key); // Assume a thread-specific key for Worker_Data
         Context ctx = {0};
         if (init_context(&ctx, monitor_index, video_mp4) < 0) {
                 cleanup_context(&ctx);
                 return -1;
         }
 
-        // Allocate array for frames (assuming max 1000 frames)
-        //Image *images = (Image *)malloc(1000 * sizeof(Image));
         dyn_array(Image, images);
         if (!images.data) {
                 syslog(LOG_ERR, "Failed to allocate image array\n");
@@ -163,27 +251,31 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         }
         int image_count = 0;
         int64_t next_pts = 0;
-
         const char loading[] = {'|', '/', '-', '\\', '|'};
         size_t loading_len = sizeof(loading)/sizeof(*loading);
         size_t loading_i = 0;
-
         double mem_usage = 0;
 
         // Load all frames
         while (av_read_frame(ctx.fmt_ctx, ctx.packet) >= 0) {
+                pthread_mutex_lock(&wd->mutex);
+                if (wd->stop) {
+                        pthread_mutex_unlock(&wd->mutex);
+                        av_packet_unref(ctx.packet);
+                        break;
+                }
+                pthread_mutex_unlock(&wd->mutex);
+
                 if (ctx.packet->stream_index == ctx.video_stream_idx) {
                         if (avcodec_send_packet(ctx.codec_ctx, ctx.packet) >= 0) {
                                 while (avcodec_receive_frame(ctx.codec_ctx, ctx.frame) >= 0) {
                                         if (ctx.frame->pts >= next_pts) {
                                                 double GBs = mem_usage / (1024.0 * 1024.0 * 1024.0);
-
                                                 if ((g_config.flags & FT_MAXMEM) && GBs >= g_config.maxmem) {
                                                         fflush(stdout);
-                                                        printf("maximum memory allowed (%f) has been exeeded, stopping image generation...\n", g_config.maxmem);
+                                                        printf("maximum memory allowed (%f) has been exceeded, stopping image generation...\n", g_config.maxmem);
                                                         goto done;
                                                 }
-
                                                 sws_scale(ctx.sws_ctx, (const uint8_t * const *)ctx.frame->data, ctx.frame->linesize, 0, ctx.codec_ctx->height,
                                                           ctx.bgra_frame->data, ctx.bgra_frame->linesize);
                                                 Image img = (Image){
@@ -222,6 +314,13 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         // Display loop
         int i = 0;
         while (1) {
+                pthread_mutex_lock(&wd->mutex);
+                if (wd->stop) {
+                        pthread_mutex_unlock(&wd->mutex);
+                        break;
+                }
+                pthread_mutex_unlock(&wd->mutex);
+
                 Image *img = &images.data[i];
                 if (!img->data) {
                         syslog(LOG_ERR, "Null image data for frame %d\n", i);
@@ -243,7 +342,7 @@ int run_load_all(int monitor_index, const char *video_mp4) {
 
                 if (sleep_time > 0) {
                         usleep(sleep_time);
-                } // Else skip sleep to avoid lag
+                }
 
                 printf("Displayed frame %d (processing: %ld us, sleep: %ld us)\n", i + 1, processing_time, sleep_time > 0 ? sleep_time : 0);
                 fflush(stdout);
@@ -256,7 +355,6 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         for (int i = 0; i < image_count; i++) {
                 if (images.data[i].data) free(images.data[i].data);
         }
-        //free(images);
         dyn_array_free(images);
         cleanup_context(&ctx);
         return 0;
@@ -269,7 +367,7 @@ void *producer_thread(void *arg) {
         int64_t next_pts = 0;
         int frame_count = 0;
 
-        while (1) {
+        while (!td->done) {
                 pthread_mutex_lock(&td->threading.mutex);
                 // Wait if buffer is full
                 while (td->count == td->buffer_size && !td->done) {
@@ -282,25 +380,25 @@ void *producer_thread(void *arg) {
                 pthread_mutex_unlock(&td->threading.mutex);
 
                 int ret = av_read_frame(ctx->fmt_ctx, ctx->packet);
-                if (ret < 0) {
+                if (ret < 0 || td->done) {
                         pthread_mutex_lock(&td->threading.mutex);
                         av_packet_unref(ctx->packet);
-                        avcodec_flush_buffers(ctx->codec_ctx);
-                        if (avformat_seek_file(ctx->fmt_ctx, ctx->video_stream_idx, INT64_MIN, 0, INT64_MAX, 0) < 0) {
-                                syslog(LOG_ERR, "Failed to seek to start of video\n");
-                                fprintf(stderr, "Failed to seek to start of video\n");
-                                td->done = 1;
-                                pthread_cond_broadcast(&td->threading.not_empty);
-                                pthread_mutex_unlock(&td->threading.mutex);
-                                break;
+                        if (!td->done) {
+                                avcodec_flush_buffers(ctx->codec_ctx);
+                                if (avformat_seek_file(ctx->fmt_ctx, ctx->video_stream_idx, INT64_MIN, 0, INT64_MAX, 0) < 0) {
+                                        syslog(LOG_ERR, "Failed to seek to start of video\n");
+                                        fprintf(stderr, "Failed to seek to start of video\n");
+                                        td->done = 1;
+                                } else {
+                                        next_pts = 0;
+                                        frame_count = 0;
+                                }
                         }
-                        next_pts = 0;
-                        frame_count = 0;
-                        //printf("Restarting video loop\n");
+                        pthread_cond_broadcast(&td->threading.not_empty);
                         pthread_mutex_unlock(&td->threading.mutex);
+                        if (td->done) break;
                         continue;
                 }
-
                 if (ctx->packet->stream_index == ctx->video_stream_idx) {
                         if (avcodec_send_packet(ctx->codec_ctx, ctx->packet) >= 0) {
                                 while (avcodec_receive_frame(ctx->codec_ctx, ctx->frame) >= 0) {
@@ -346,11 +444,10 @@ void *consumer_thread(void *arg) {
         Context *ctx = td->ctx;
         int frame_count = 0;
 
-        while (1) {
+        while (!td->done) {
                 long start_time = get_time_us();
 
                 pthread_mutex_lock(&td->threading.mutex);
-                // Wait if buffer is empty
                 while (td->count == 0 && !td->done) {
                         pthread_cond_wait(&td->threading.not_empty, &td->threading.mutex);
                 }
@@ -358,7 +455,6 @@ void *consumer_thread(void *arg) {
                         pthread_mutex_unlock(&td->threading.mutex);
                         break;
                 }
-
                 Image *img = &td->buffer[td->read_idx];
                 td->read_idx = (td->read_idx + 1) % td->buffer_size;
                 td->count--;
@@ -389,21 +485,98 @@ void *consumer_thread(void *arg) {
         return NULL;
 }
 
+void *fifo_reader_thread(void *arg) {
+        Worker_Data *wd = (Worker_Data *)arg;
+        FILE *fifo = fopen(FIFO_PATH, "r");
+        if (!fifo) {
+                syslog(LOG_ERR, "Failed to open FIFO %s for reading: %s", FIFO_PATH, strerror(errno));
+                exit(EXIT_FAILURE);
+        }
+
+        char buf[256];
+        while (1) {
+                if (fgets(buf, sizeof(buf), fifo)) {
+                        syslog(LOG_INFO, "FIFO reader: Received message: %s", buf);
+                        parse_daemon_sender_msg(buf);
+
+                        pthread_mutex_lock(&wd->mutex);
+                        if (g_config.wp && (!wd->wp || strcmp(g_config.wp, wd->wp) != 0 || g_config.mon != wd->mon || g_config.mode != wd->mode || g_config.maxmem != wd->maxmem)) {
+                                if (wd->running) {
+                                        syslog(LOG_INFO, "FIFO reader: Stopping existing worker");
+                                        wd->stop = 1;
+                                        if (wd->mode == MODE_STREAM && wd->td) {
+                                                pthread_mutex_lock(&wd->td->threading.mutex);
+                                                wd->td->done = 1;
+                                                pthread_cond_broadcast(&wd->td->threading.not_empty);
+                                                pthread_cond_broadcast(&wd->td->threading.not_full);
+                                                pthread_mutex_unlock(&wd->td->threading.mutex);
+                                        }
+                                        while (wd->running) {
+                                                pthread_cond_wait(&wd->cond, &wd->mutex);
+                                        }
+                                        if (wd->thread) {
+                                                pthread_join(wd->thread, NULL);
+                                                wd->thread = 0;
+                                        }
+                                }
+
+                                // Update worker configuration
+                                if (wd->wp) free(wd->wp);
+                                wd->wp = g_config.wp ? strdup(g_config.wp) : NULL;
+                                wd->mon = g_config.mon;
+                                wd->mode = g_config.mode;
+                                wd->maxmem = g_config.maxmem;
+                                wd->stop = 0;
+
+                                if (wd->wp) {
+                                        wd->running = 1;
+                                        if (pthread_create(&wd->thread, NULL, worker_thread, wd) != 0) {
+                                                syslog(LOG_ERR, "Failed to create worker thread");
+                                                wd->running = 0;
+                                        } else {
+                                                syslog(LOG_INFO, "FIFO reader: Started new worker with wp=%s, mon=%d, mode=%d", wd->wp, wd->mon, (int)wd->mode);
+                                        }
+                                }
+                        }
+                        pthread_mutex_unlock(&wd->mutex);
+                } else {
+                        fclose(fifo);
+                        fifo = fopen(FIFO_PATH, "r");
+                        if (!fifo) {
+                                syslog(LOG_ERR, "Failed to reopen FIFO %s: %s", FIFO_PATH, strerror(errno));
+                                exit(EXIT_FAILURE);
+                        }
+                }
+        }
+
+        fclose(fifo);
+        return NULL;
+}
+
+static void cleanup_thread_data(Thread_Data *td) {
+        for (int i = 0; i < td->buffer_size; i++) {
+                if (td->buffer[i].data) free(td->buffer[i].data);
+        }
+        free(td->buffer);
+        pthread_mutex_destroy(&td->threading.mutex);
+        pthread_cond_destroy(&td->threading.not_full);
+        pthread_cond_destroy(&td->threading.not_empty);
+}
+
 int run_stream(int monitor_index, const char *video_mp4) {
+        Worker_Data *wd = pthread_getspecific(worker_data_key); // Assume a thread-specific key
         syslog(LOG_INFO, "run_stream()");
         Context ctx = {0};
         if (init_context(&ctx, monitor_index, video_mp4) < 0) {
-                syslog(LOG_INFO, "init context failed");
+                syslog(LOG_ERR, "init context failed");
                 cleanup_context(&ctx);
                 return -1;
         }
 
-        syslog(LOG_INFO, "init context");
-
         // Initialize threading data
         Thread_Data td = {0};
         td.ctx = &ctx;
-        td.buffer_size = 2; // Small buffer to minimize memory
+        td.buffer_size = 2;
         td.buffer = (Image *)malloc(td.buffer_size * sizeof(Image));
         if (!td.buffer) {
                 syslog(LOG_ERR, "Failed to allocate thread buffer\n");
@@ -412,7 +585,7 @@ int run_stream(int monitor_index, const char *video_mp4) {
                 return -1;
         }
         for (int i = 0; i < td.buffer_size; i++) {
-                td.buffer[i].data = NULL; // Will be allocated in producer
+                td.buffer[i].data = NULL;
                 td.buffer[i].size = ctx.bgra_size;
         }
         pthread_mutex_init(&td.threading.mutex, NULL);
@@ -420,18 +593,20 @@ int run_stream(int monitor_index, const char *video_mp4) {
         pthread_cond_init(&td.threading.not_empty, NULL);
         td.done = 0;
 
+        // Store Thread_Data in Worker_Data
+        pthread_mutex_lock(&wd->mutex);
+        wd->td = &td;
+        pthread_mutex_unlock(&wd->mutex);
+
         // Create threads
         pthread_t producer, consumer;
         if (pthread_create(&producer, NULL, producer_thread, &td) != 0) {
                 syslog(LOG_ERR, "Failed to create producer thread\n");
                 fprintf(stderr, "Failed to create producer thread\n");
-                for (int i = 0; i < td.buffer_size; i++) {
-                        if (td.buffer[i].data) free(td.buffer[i].data);
-                }
-                free(td.buffer);
-                pthread_mutex_destroy(&td.threading.mutex);
-                pthread_cond_destroy(&td.threading.not_full);
-                pthread_cond_destroy(&td.threading.not_empty);
+                pthread_mutex_lock(&wd->mutex);
+                wd->td = NULL;
+                pthread_mutex_unlock(&wd->mutex);
+                cleanup_thread_data(&td);
                 cleanup_context(&ctx);
                 return -1;
         }
@@ -441,29 +616,23 @@ int run_stream(int monitor_index, const char *video_mp4) {
                 td.done = 1;
                 pthread_cond_broadcast(&td.threading.not_empty);
                 pthread_join(producer, NULL);
-                for (int i = 0; i < td.buffer_size; i++) {
-                        if (td.buffer[i].data) free(td.buffer[i].data);
-                }
-                free(td.buffer);
-                pthread_mutex_destroy(&td.threading.mutex);
-                pthread_cond_destroy(&td.threading.not_full);
-                pthread_cond_destroy(&td.threading.not_empty);
+                pthread_mutex_lock(&wd->mutex);
+                wd->td = NULL;
+                pthread_mutex_unlock(&wd->mutex);
+                cleanup_thread_data(&td);
                 cleanup_context(&ctx);
                 return -1;
         }
 
-        // Wait for threads to finish
         pthread_join(producer, NULL);
         pthread_join(consumer, NULL);
 
-        // Cleanup threading data
-        for (int i = 0; i < td.buffer_size; i++) {
-                if (td.buffer[i].data) free(td.buffer[i].data);
-        }
-        free(td.buffer);
-        pthread_mutex_destroy(&td.threading.mutex);
-        pthread_cond_destroy(&td.threading.not_full);
-        pthread_cond_destroy(&td.threading.not_empty);
+        // Clear Thread_Data from Worker_Data
+        pthread_mutex_lock(&wd->mutex);
+        wd->td = NULL;
+        pthread_mutex_unlock(&wd->mutex);
+
+        cleanup_thread_data(&td);
         cleanup_context(&ctx);
         return 0;
 }
@@ -561,6 +730,34 @@ static void signal_handler(int sig) {
         }
 }
 
+static void stop_daemon(void) {
+        FILE *f = fopen(PID_PATH, "r");
+        if (!f) {
+                fprintf(stderr, "No daemon running (PID file %s not found)\n", PID_PATH);
+                exit(EXIT_FAILURE);
+        }
+
+        pid_t pid;
+        if (fscanf(f, "%d", &pid) != 1) {
+                fclose(f);
+                fprintf(stderr, "Failed to read PID from %s\n", PID_PATH);
+                exit(EXIT_FAILURE);
+        }
+        fclose(f);
+
+        if (kill(pid, SIGTERM) < 0) {
+                if (errno == ESRCH) {
+                        fprintf(stderr, "No daemon running with PID %d\n", pid);
+                } else {
+                        perror("kill");
+                }
+                exit(EXIT_FAILURE);
+        }
+
+        printf("Sent SIGTERM to daemon with PID %d\n", pid);
+        exit(EXIT_SUCCESS);
+}
+
 static void usage(void) {
         printf("awx <walpaper_filepath> [options...]\n");
         printf("Options:\n");
@@ -568,6 +765,7 @@ static void usage(void) {
         printf("        --%s=<int>            set the display monitor or (-1) to combine all monitors into one single monitor\n", FLAG_2HY_MON);
         printf("        --%s=<stream|load>   set the frame generation mode\n", FLAG_2HY_MODE);
         printf("        --%s=<float>       set a maximum memory limit for --mode=load\n", FLAG_2HY_MAXMEM);
+        printf("        --%s                  stop the running daemon\n", FLAG_2HY_STOP);
 }
 
 static void parse_daemon_sender_msg(const char *msg) {
@@ -658,53 +856,28 @@ static void daemon_loop(void) {
         openlog("awx", LOG_PID | LOG_CONS, LOG_DAEMON);
         signal(SIGTERM, signal_handler);
 
-        // Remove existing FIFO if it exists
         unlink(FIFO_PATH);
-
-        // Create new FIFO
         if (mkfifo(FIFO_PATH, 0666) < 0) {
                 syslog(LOG_ERR, "Failed to create FIFO %s: %s", FIFO_PATH, strerror(errno));
                 exit(EXIT_FAILURE);
         }
 
-        // Open FIFO for reading
-        FILE *fifo = fopen(FIFO_PATH, "r");
-        if (!fifo) {
-                syslog(LOG_ERR, "Failed to open FIFO %s for reading: %s", FIFO_PATH, strerror(errno));
+        init_thread_specific();
+        Worker_Data wd;
+        init_worker_data(&wd);
+
+        pthread_t fifo_reader;
+        if (pthread_create(&fifo_reader, NULL, fifo_reader_thread, &wd) != 0) {
+                syslog(LOG_ERR, "Failed to create FIFO reader thread");
+                cleanup_worker_data(&wd);
+                unlink(FIFO_PATH);
+                closelog();
                 exit(EXIT_FAILURE);
         }
 
-        char buf[256];
-        while (1) {
-                // Read message from FIFO
-                if (fgets(buf, sizeof(buf), fifo)) {
-                        syslog(LOG_INFO, "Received message: %s", buf);
-                        parse_daemon_sender_msg(buf);
-                        syslog(LOG_INFO, "Parsed message: %s", buf);
-                        if (g_config.wp) {
-                                syslog(LOG_INFO, "Got wallpaper filepath: %s with mode %d", g_config.wp, (int)g_config.mode);
-                                if (g_config.mode == MODE_STREAM) {
-                                        syslog(LOG_INFO, "STREAMING");
-                                        (void)run_stream(g_config.mon, g_config.wp);
-                                        syslog(LOG_INFO, "DONE");
-                                } else if (g_config.mode == MODE_LOAD) {
-                                        syslog(LOG_INFO, "LOADING");
-                                        (void)run_load_all(g_config.mon, g_config.wp);
-                                }
-                        }
-                } else {
-                        // EOF or error; reopen FIFO to wait for new writers
-                        fclose(fifo);
-                        fifo = fopen(FIFO_PATH, "r");
-                        if (!fifo) {
-                                syslog(LOG_ERR, "Failed to reopen FIFO %s: %s", FIFO_PATH, strerror(errno));
-                                exit(EXIT_FAILURE);
-                        }
-                }
-        }
+        pthread_join(fifo_reader, NULL);
 
-        // Cleanup (unreachable in this loop, but for completeness)
-        fclose(fifo);
+        cleanup_worker_data(&wd);
         free(g_config.wp);
         unlink(FIFO_PATH);
         closelog();
@@ -820,6 +993,8 @@ int main(int argc, char *argv[]) {
                         } else {
                                 err_wargs("--mode expects either `stream` or `load`, not `%s`", arg.eq);
                         }
+                }  else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_STOP)) {
+                        stop_daemon();
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_MAXMEM)) {
                         if (!arg.eq) {
                                 err("--maxmem expects a value after equals (=)\n");

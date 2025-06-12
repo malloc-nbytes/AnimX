@@ -9,6 +9,7 @@
 #define FLAG_2HY_MODE "mode"
 #define FLAG_2HY_MAXMEM "maxmem"
 #define FLAG_2HY_DAEMON "damon"
+#define FLAG_2HY_STOP "stop"
 
 typedef enum {
         FT_MAXMEM = 1 << 0,
