@@ -279,8 +279,13 @@ int display_frame(Context *ctx, uint8_t *data, int width, int height, int frame_
         return 0;
 }
 
+static Worker_Data* get_worker_data(void) {
+        return (Worker_Data*)pthread_getspecific(worker_data_key);
+}
+
 int run_load_all(int monitor_index, const char *video_mp4) {
-        Worker_Data *wd = pthread_getspecific(worker_data_key);
+        Worker_Data *wd = get_worker_data(); // May be NULL in non-daemon mode
+        int is_daemon = g_config.flags & FT_DAEMON;
         Context ctx = {0};
         if (init_context(&ctx, monitor_index, video_mp4) < 0) {
                 cleanup_context(&ctx);
@@ -315,7 +320,7 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                 return single_frame; // Return 1 to indicate single frame
         }
 
-        // Existing multi-frame logic
+        // Multi-frame logic
         dyn_array(Image, images);
         if (!images.data) {
                 syslog(LOG_ERR, "Failed to allocate image array\n");
@@ -331,13 +336,15 @@ int run_load_all(int monitor_index, const char *video_mp4) {
         double mem_usage = 0;
 
         while (av_read_frame(ctx.fmt_ctx, ctx.packet) >= 0) {
-                pthread_mutex_lock(&wd->mutex);
-                if (wd->stop) {
+                if (is_daemon && wd) {
+                        pthread_mutex_lock(&wd->mutex);
+                        if (wd->stop) {
+                                pthread_mutex_unlock(&wd->mutex);
+                                av_packet_unref(ctx.packet);
+                                break;
+                        }
                         pthread_mutex_unlock(&wd->mutex);
-                        av_packet_unref(ctx.packet);
-                        break;
                 }
-                pthread_mutex_unlock(&wd->mutex);
 
                 if (ctx.packet->stream_index == ctx.video_stream_idx) {
                         if (avcodec_send_packet(ctx.codec_ctx, ctx.packet) >= 0) {
@@ -370,7 +377,7 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                                                 printf("\033[A");
                                                 printf("\033[2K");
                                                 if (image_count%5 == 0) {
-                                                        loading_i = (loading_i+1)%loading_len;
+                                                        loading_i = (loading_i + 1)%loading_len;
                                                 }
                                                 dyn_array_append(images, img);
                                         }
@@ -386,12 +393,14 @@ int run_load_all(int monitor_index, const char *video_mp4) {
 
         int i = 0;
         while (1) {
-                pthread_mutex_lock(&wd->mutex);
-                if (wd->stop) {
+                if (is_daemon && wd) {
+                        pthread_mutex_lock(&wd->mutex);
+                        if (wd->stop) {
+                                pthread_mutex_unlock(&wd->mutex);
+                                break;
+                        }
                         pthread_mutex_unlock(&wd->mutex);
-                        break;
                 }
-                pthread_mutex_unlock(&wd->mutex);
 
                 Image *img = &images.data[i];
                 if (!img->data) {
@@ -635,8 +644,9 @@ static void cleanup_thread_data(Thread_Data *td) {
 }
 
 int run_stream(int monitor_index, const char *video_mp4) {
-        Worker_Data *wd = pthread_getspecific(worker_data_key);
-        syslog(LOG_INFO, "run_stream()");
+        Worker_Data *wd = get_worker_data(); // May be NULL in non-daemon mode
+        int is_daemon = g_config.flags | FT_DAEMON;
+        syslog(LOG_INFO, "run_stream()\n");
         Context ctx = {0};
         if (init_context(&ctx, monitor_index, video_mp4) < 0) {
                 syslog(LOG_ERR, "init context failed");
@@ -692,17 +702,21 @@ int run_stream(int monitor_index, const char *video_mp4) {
         pthread_cond_init(&td.threading.not_empty, NULL);
         td.done = 0;
 
-        pthread_mutex_lock(&wd->mutex);
-        wd->td = &td;
-        pthread_mutex_unlock(&wd->mutex);
+        if (is_daemon && wd) {
+                pthread_mutex_lock(&wd->mutex);
+                wd->td = &td;
+                pthread_mutex_unlock(&wd->mutex);
+        }
 
         pthread_t producer, consumer;
         if (pthread_create(&producer, NULL, producer_thread, &td) != 0) {
                 syslog(LOG_ERR, "Failed to create producer thread\n");
                 fprintf(stderr, "Failed to create producer thread\n");
-                pthread_mutex_lock(&wd->mutex);
-                wd->td = NULL;
-                pthread_mutex_unlock(&wd->mutex);
+                if (is_daemon && wd) {
+                        pthread_mutex_lock(&wd->mutex);
+                        wd->td = NULL;
+                        pthread_mutex_unlock(&wd->mutex);
+                }
                 cleanup_thread_data(&td);
                 cleanup_context(&ctx);
                 return -1;
@@ -713,9 +727,11 @@ int run_stream(int monitor_index, const char *video_mp4) {
                 td.done = 1;
                 pthread_cond_broadcast(&td.threading.not_empty);
                 pthread_join(producer, NULL);
-                pthread_mutex_lock(&wd->mutex);
-                wd->td = NULL;
-                pthread_mutex_unlock(&wd->mutex);
+                if (is_daemon && wd) {
+                        pthread_mutex_lock(&wd->mutex);
+                        wd->td = NULL;
+                        pthread_mutex_unlock(&wd->mutex);
+                }
                 cleanup_thread_data(&td);
                 cleanup_context(&ctx);
                 return -1;
@@ -724,9 +740,11 @@ int run_stream(int monitor_index, const char *video_mp4) {
         pthread_join(producer, NULL);
         pthread_join(consumer, NULL);
 
-        pthread_mutex_lock(&wd->mutex);
-        wd->td = NULL;
-        pthread_mutex_unlock(&wd->mutex);
+        if (is_daemon && wd) {
+                pthread_mutex_lock(&wd->mutex);
+                wd->td = NULL;
+                pthread_mutex_unlock(&wd->mutex);
+        }
 
         cleanup_thread_data(&td);
         cleanup_context(&ctx);
