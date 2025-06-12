@@ -193,10 +193,10 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                                                 memcpy(img.data, ctx.bgra_buffer, ctx.bgra_size);
                                                 image_count++;
                                                 next_pts += ctx.frame_duration;
-                                                /* printf("Loading Frames... [%d], mem=%fGB %c\n", image_count, GBs, loading[loading_i]); */
-                                                /* fflush(stdout); */
-                                                /* printf("\033[A"); */
-                                                /* printf("\033[2K"); */
+                                                printf("Loading Frames... [%d], mem=%fGB %c\n", image_count, GBs, loading[loading_i]);
+                                                fflush(stdout);
+                                                printf("\033[A");
+                                                printf("\033[2K");
                                                 if (image_count%5 == 0) {
                                                         loading_i = (loading_i+1)%loading_len;
                                                 }
@@ -237,10 +237,10 @@ int run_load_all(int monitor_index, const char *video_mp4) {
                         usleep(sleep_time);
                 } // Else skip sleep to avoid lag
 
-                /* printf("Displayed frame %d (processing: %ld us, sleep: %ld us)\n", i + 1, processing_time, sleep_time > 0 ? sleep_time : 0); */
-                /* fflush(stdout); */
-                /* printf("\033[A"); */
-                /* printf("\033[2K"); */
+                printf("Displayed frame %d (processing: %ld us, sleep: %ld us)\n", i + 1, processing_time, sleep_time > 0 ? sleep_time : 0);
+                fflush(stdout);
+                printf("\033[A");
+                printf("\033[2K");
                 i = (i + 1) % image_count;
         }
 
@@ -829,10 +829,6 @@ int main(int argc, char *argv[]) {
         }
         clap_destroy();
 
-        if (!g_config.wp) {
-                //err("Wallpaper filepath is not set");
-        }
-
         if (g_config.flags & FT_DAEMON) {
                 if (daemon_running()) {
                         err("awx daemon is already running");
@@ -852,7 +848,17 @@ int main(int argc, char *argv[]) {
         } else {
                 // sending message
                 if (!daemon_running()) {
-                        err("awx daemon is not running, start with (-d | --daemon)");
+                        if (!g_config.wp) {
+                                err("Wallpaper filepath is not set");
+                        }
+
+                        //err("awx daemon is not running, start with (-d | --daemon)");
+                        if (g_config.mode == MODE_STREAM) {
+                                (void)run_stream(g_config.mon, g_config.wp);
+                        } else if (g_config.mode == MODE_LOAD) {
+                                (void)run_load_all(g_config.mon, g_config.wp);
+                        }
+
                 }
                 send_msg(orig_argv, orig_argc);
                 printf("sent message\n");
