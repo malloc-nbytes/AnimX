@@ -29,7 +29,7 @@ typedef enum {
 
 static struct {
         uint32_t flags;
-        const char *wp;
+        char *wp;
         int mon;
         Mode_Type mode;
         double maxmem;
@@ -515,7 +515,7 @@ int main(int argc, char *argv[]) {
         printf("Mode: %s\n", g_config.mode == MODE_LOAD ? "load" : "stream");
         if (g_config.flags & FT_MAXMEM) {
                 if (g_config.maxmem < 0) {
-                        err_wargs("The maximum memory you entered (%f) must be > 0.f", g_config.maxmem);
+                        err_wargs("The maximum memory you entered (%f) must be > 0.0", g_config.maxmem);
                 }
                 printf("Maximum Memory Allowed: %fGB\n", g_config.maxmem);
         }
@@ -525,6 +525,8 @@ int main(int argc, char *argv[]) {
         } else {
                 return run_load_all(g_config.mon, g_config.wp);
         }
+
+        free(g_config.wp);
 
         return 0;
 }

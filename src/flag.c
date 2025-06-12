@@ -81,11 +81,11 @@ void dump_flag_info(const char *name) {
         if (OHYEQ(n, name, FLAG_1HY_HELP) || !strcmp(name, FLAG_2HY_HELP)) {
                 infos[0]();
         } else if (!strcmp(name, FLAG_2HY_MON)) {
-                infos[2]();
+                infos[1]();
         } else if (!strcmp(name, FLAG_2HY_MODE)) {
-                infos[3]();
+                infos[2]();
         } else if (!strcmp(name, FLAG_2HY_MAXMEM)) {
-                infos[4]();
+                infos[3]();
         } else if (OHYEQ(n, name, '*')) {
                 for (size_t i = 0; i < sizeof(infos)/sizeof(*infos); ++i) {
                         if (i != 0) putchar('\n');

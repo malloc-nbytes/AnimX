@@ -2,9 +2,10 @@
 #define GL_H
 
 extern struct {
-        const char *video_mp4;
-        int monitor;
-        Mode_Type mode_type;
+        uint32_t flags;
+        char *wp;
+        int mon;
+        Mode_Type mode;
         double maxmem;
 } g_config;
 
