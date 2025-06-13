@@ -17,5 +17,6 @@
         } while (0)
 
 int str_isdigit(const char *s);
+char *resolve(const char *fp);
 
 #endif // UTILS_H

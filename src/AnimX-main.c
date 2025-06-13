@@ -11,7 +11,6 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <syslog.h>
-
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/file.h>
@@ -599,7 +598,7 @@ void *fifo_reader_thread(void *arg) {
 
                                 // Update worker configuration
                                 if (wd->wp) free(wd->wp);
-                                wd->wp = g_config.wp ? strdup(g_config.wp) : NULL;
+                                wd->wp = g_config.wp ? strdup(resolve(g_config.wp)) : NULL;
                                 wd->mon = g_config.mon;
                                 wd->mode = g_config.mode;
                                 wd->maxmem = g_config.maxmem;
@@ -957,7 +956,7 @@ static void parse_daemon_sender_msg(const char *msg) {
                         if (g_config.wp) {
                                 free(g_config.wp);
                         }
-                        g_config.wp = strdup(buf);
+                        g_config.wp = strdup(resolve(buf));
                         syslog(LOG_INFO, "fp: %s", g_config.wp ? g_config.wp : "(null)");
                 }
         }
@@ -983,7 +982,7 @@ static void daemon_loop(void) {
         // Apply initial configuration if available
         pthread_mutex_lock(&wd.mutex);
         if (g_config.wp) {
-                wd.wp = strdup(g_config.wp);
+                wd.wp = strdup(resolve(g_config.wp));
                 wd.mon = g_config.mon;
                 wd.mode = g_config.mode;
                 wd.maxmem = g_config.maxmem;
@@ -1153,7 +1152,7 @@ int main(int argc, char *argv[]) {
                         if (g_config.wp) {
                                 err_wargs("only one wallpaper is allowed, already have: %s", g_config.wp);
                         }
-                        g_config.wp = strdup(arg.start);
+                        g_config.wp = strdup(resolve(arg.start));
                 } else {
                         err_wargs("unknown option `%s`", arg.start);
                 }
