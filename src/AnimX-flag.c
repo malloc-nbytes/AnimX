@@ -69,7 +69,7 @@ static void daemon_info(void) {
         printf("--help(%c, %s):\n", FLAG_1HY_DAEMON, FLAG_2HY_DAEMON);
         printf("    Launch the deamon. If you do not provide any information\n");
         printf("    to AnimX when launching the daemon, it will wait until\n");
-        printf("    you send a signal to it. Issue the `--kill` flag to stop it.\n\n");
+        printf("    you send a signal to it. Issue the `--stop` flag to stop it.\n\n");
         printf("    Note:\n");
         printf("        1. You can see logging information in `/var/log/syslog`.\n");
         printf("        2. A FIFO file and PID file are created in `/tmp/`.\n\n");
