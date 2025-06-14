@@ -88,8 +88,6 @@ static void parse_config_file(const char *path) {
                         } else if (strcmp(value.data, "false") != 0) {
                                 fprintf(stderr, "parse_config_file(): daemon requires true|false, not: %s\n", cmd.data);
                         }
-                } else if (cmd.len != 0 && value.len != 0) {
-                        fprintf(stderr, "parse_config_file(): unknown flag: %s\n", cmd.data);
                 }
                 if (cmd.len > 0) { dyn_array_free(cmd); }
                 if (value.len > 0) { dyn_array_free(value); }
