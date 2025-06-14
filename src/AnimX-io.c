@@ -33,6 +33,9 @@ static void parse_config_file(const char *path) {
 
                 char *s = lines[i];
                 while (*s) {
+                        if (*s == '/' && *(s+1) == '/') {
+                                break;
+                        }
                         if (*s == '\n') continue;
                         if (*s == '=') {
                                 if (!eq) {
@@ -85,12 +88,11 @@ static void parse_config_file(const char *path) {
                         } else if (strcmp(value.data, "false") != 0) {
                                 fprintf(stderr, "parse_config_file(): daemon requires true|false, not: %s\n", cmd.data);
                         }
-                } else {
+                } else if (cmd.len != 0 && value.len != 0) {
                         fprintf(stderr, "parse_config_file(): unknown flag: %s\n", cmd.data);
                 }
-
-                dyn_array_free(cmd);
-                dyn_array_free(value);
+                if (cmd.len > 0) { dyn_array_free(cmd); }
+                if (value.len > 0) { dyn_array_free(value); }
         }
 }
 
@@ -109,7 +111,13 @@ void write_config_file(void) {
         dyn_array(char, content);
 
         {
-                char cmd[256] = {0}; strcpy(cmd, "wp");
+                char comment[] = "// This is a generated file, changes here will not be saved!";
+                for (size_t i = 0; comment[i]; ++i) dyn_array_append(content, comment[i]);
+                dyn_array_append(content, '\n');
+        }
+
+        {
+                char cmd[] = "wp";
                 for (size_t i = 0; cmd[i]; ++i) dyn_array_append(content, cmd[i]);
                 dyn_array_append(content, '=');
 
@@ -119,7 +127,7 @@ void write_config_file(void) {
         }
 
         {
-                char cmd[256] = {0}; strcpy(cmd, "mon");
+                char cmd[] = "mon";
                 for (size_t i = 0; cmd[i]; ++i) dyn_array_append(content, cmd[i]);
                 dyn_array_append(content, '=');
 
@@ -131,7 +139,7 @@ void write_config_file(void) {
         }
 
         {
-                char cmd[256] = {0}; strcpy(cmd, "mode");
+                char cmd[256] = "mode";
                 for (size_t i = 0; cmd[i]; ++i) dyn_array_append(content, cmd[i]);
                 dyn_array_append(content, '=');
 
@@ -147,7 +155,7 @@ void write_config_file(void) {
         }
 
         {
-                char cmd[256] = {0}; strcpy(cmd, "maxmem");
+                char cmd[256] = "maxmem";
                 for (size_t i = 0; cmd[i]; ++i) dyn_array_append(content, cmd[i]);
                 dyn_array_append(content, '=');
 
@@ -159,15 +167,28 @@ void write_config_file(void) {
         }
 
         {
-                char cmd[256] = {0}; strcpy(cmd, "fps");
+                char cmd[256] = "fps";
                 for (size_t i = 0; cmd[i]; ++i) dyn_array_append(content, cmd[i]);
                 dyn_array_append(content, '=');
 
                 sprintf(buf, "%d", g_config.fps);
                 for (size_t i = 0; buf[i]; ++i) {
                         dyn_array_append(content, buf[i]);
-                } // NO MORE NEWLINES!!!
+                } dyn_array_append(content, '\n');
                 memset(buf, 0, sizeof(buf)/sizeof(*buf));
+        }
+
+        {
+                char cmd[256] = "daemon";
+                char true_[] = "true";
+                char false_[] = "false";
+                for (size_t i = 0; cmd[i]; ++i) dyn_array_append(content, cmd[i]);
+                dyn_array_append(content, '=');
+                int is_daemon = g_config.flags & FT_DAEMON;
+
+                for (size_t i = 0; is_daemon ? true_[i] : false_[i]; ++i) {
+                        dyn_array_append(content, is_daemon ? true_[i] : false_[i]);
+                } // no more newlines
         }
 
         dyn_array_append(content, 0);

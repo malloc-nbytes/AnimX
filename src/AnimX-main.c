@@ -913,6 +913,7 @@ static void usage(void) {
         printf("        --%s=<float>       set a maximum memory limit for --mode=load\n", FLAG_2HY_MAXMEM);
         printf("        --%s=<int>            set the FPS\n", FLAG_2HY_FPS);
         printf("        --%s                 stop the running the daemon\n", FLAG_2HY_STOP);
+        printf("        --%s              restore the last configuration used\n", FLAG_2HY_RESTORE);
 }
 
 static void parse_daemon_sender_msg(const char *msg) {
@@ -1154,8 +1155,6 @@ void send_msg(char **msg, size_t len) {
 int main(int argc, char *argv[]) {
         --argc, ++argv;
 
-        read_config_file();
-
         char **orig_argv = argv;
         int orig_argc = argc;
 
@@ -1219,6 +1218,8 @@ int main(int argc, char *argv[]) {
                         g_config.flags |= FT_MAXMEM;
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_DAEMON)) {
                         g_config.flags |= FT_DAEMON;
+                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_RESTORE)) {
+                        read_config_file();
                 } else if (arg.hyphc == 0) {
                         if (g_config.wp) {
                                 err_wargs("only one wallpaper is allowed, already have: %s", g_config.wp);

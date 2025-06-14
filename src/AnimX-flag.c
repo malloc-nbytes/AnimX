@@ -3,6 +3,13 @@
 #include "AnimX-flag.h"
 #include "AnimX-utils.h"
 
+static void restore_info(void) {
+        printf("--help(%s):\n", FLAG_2HY_RESTORE);
+        printf("    Restore the last configuration that was used.\n");
+        printf("    Example:\n");
+        printf("        AnimX --restore\n");
+}
+
 static void fps_info(void) {
         printf("--help(%s):\n", FLAG_2HY_FPS);
         printf("    Set the FPS of the wallpaper. Setting it to a higher value will\n");
@@ -114,6 +121,7 @@ void dump_flag_info(const char *name) {
                 daemon_info,
                 stop_info,
                 fps_info,
+                restore_info,
         };
 
 #define OHYEQ(n, flag, actual) ((n) == 1 && (flag)[0] == (actual))
@@ -132,6 +140,8 @@ void dump_flag_info(const char *name) {
                 infos[5]();
         } else if (!strcmp(name, FLAG_2HY_FPS)) {
                 infos[6]();
+        }  else if (!strcmp(name, FLAG_2HY_RESTORE)) {
+                infos[7]();
         } else if (OHYEQ(n, name, '*')) {
                 for (size_t i = 0; i < sizeof(infos)/sizeof(*infos); ++i) {
                         if (i != 0) putchar('\n');
