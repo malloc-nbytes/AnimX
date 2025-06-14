@@ -1,5 +1,6 @@
 # Autotools generated files
 /Makefile
+/src/Makefile
 Makefile.in
 /compile
 /aclocal.m4
