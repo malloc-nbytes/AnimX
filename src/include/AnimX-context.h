@@ -14,10 +14,12 @@ typedef struct {
         XRRScreenResources *screen_res;
         XRROutputInfo **output_infos; // Array for multiple monitors
         XRRCrtcInfo **crtc_infos; // Array for multiple monitors
-        int num_monitors; // Number of monitors when index is -1
-        long monitor_x, monitor_y, monitor_width, monitor_height;
-        Pixmap root_pixmap;
-        GC root_gc;
+        int num_monitors; // Number of monitors
+        long monitor_x, monitor_y, monitor_width, monitor_height; // Used for single or combined mode
+        Pixmap *monitor_pixmaps; // Array of pixmaps for each monitor in mirror mode
+        GC *monitor_gcs; // Array of GCs for each monitor in mirror mode
+        Pixmap root_pixmap; // Used for single or combined mode
+        GC root_gc; // Used for single or combined mode
         Atom xrootpmap_id, esetroot_pmap_id;
         AVFormatContext *fmt_ctx;
         int video_stream_idx;
@@ -31,6 +33,7 @@ typedef struct {
         double frame_interval;
         double video_time_base;
         int64_t frame_duration;
+        int mirror_mode; // Flag to indicate --mon=-2 (mirror mode)
 } Context;
 
 void cleanup_context(Context *ctx);

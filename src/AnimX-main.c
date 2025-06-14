@@ -48,7 +48,7 @@ static struct {
 } g_config = {
         .flags = 0x00000000,
         .wp = NULL,
-        .mon = -1,
+        .mon = -2,
         .mode = MODE_STREAM,
         .maxmem = 0.f,
 };
@@ -234,33 +234,57 @@ int display_frame(Context *ctx, uint8_t *data, int width, int height, int frame_
         }
         ximage->byte_order = ImageByteOrder(ctx->display);
 
-        Pixmap pixmap = XCreatePixmap(ctx->display, ctx->root, width, height, ctx->depth);
-        if (!pixmap) {
-                syslog(LOG_ERR, "Failed to create pixmap for frame %d\n", frame_count);
-                fprintf(stderr, "Failed to create pixmap for frame %d\n", frame_count);
-                XDestroyImage(ximage);
-                return -1;
-        }
+        if (ctx->mirror_mode) {
+                // Mirror mode: apply the same frame to each monitor
+                for (int i = 0; i < ctx->num_monitors; i++) {
+                        Pixmap pixmap = ctx->monitor_pixmaps[i];
+                        GC gc = ctx->monitor_gcs[i];
 
-        GC gc = XCreateGC(ctx->display, pixmap, 0, NULL);
-        if (!gc) {
-                syslog(LOG_ERR, "Failed to create GC for frame %d\n", frame_count);
-                fprintf(stderr, "Failed to create GC for frame %d\n", frame_count);
-                XFreePixmap(ctx->display, pixmap);
-                XDestroyImage(ximage);
-                return -1;
-        }
+                        if (XPutImage(ctx->display, pixmap, gc, ximage, 0, 0, 0, 0, width, height) != Success) {
+                                syslog(LOG_ERR, "XPutImage failed for monitor %d, frame %d\n", i, frame_count);
+                                fprintf(stderr, "XPutImage failed for monitor %d, frame %d\n", i, frame_count);
+                                XDestroyImage(ximage);
+                                return -1;
+                        }
 
-        if (XPutImage(ctx->display, pixmap, gc, ximage, 0, 0, 0, 0, width, height) != Success) {
-                syslog(LOG_ERR, "XPutImage failed for frame %d\n", frame_count);
-                fprintf(stderr, "XPutImage failed for frame %d\n", frame_count);
+                        // Copy to root pixmap at monitor's position
+                        XCopyArea(ctx->display, pixmap, ctx->root_pixmap, ctx->root_gc, 0, 0, width, height,
+                                  ctx->crtc_infos[i]->x, ctx->crtc_infos[i]->y);
+                }
+        } else {
+                // Single or combined mode
+                Pixmap pixmap = XCreatePixmap(ctx->display, ctx->root, width, height, ctx->depth);
+                if (!pixmap) {
+                        syslog(LOG_ERR, "Failed to create pixmap for frame %d\n", frame_count);
+                        fprintf(stderr, "Failed to create pixmap for frame %d\n", frame_count);
+                        XDestroyImage(ximage);
+                        return -1;
+                }
+
+                GC gc = XCreateGC(ctx->display, pixmap, 0, NULL);
+                if (!gc) {
+                        syslog(LOG_ERR, "Failed to create GC for frame %d\n", frame_count);
+                        fprintf(stderr, "Failed to create GC for frame %d\n", frame_count);
+                        XFreePixmap(ctx->display, pixmap);
+                        XDestroyImage(ximage);
+                        return -1;
+                }
+
+                if (XPutImage(ctx->display, pixmap, gc, ximage, 0, 0, 0, 0, width, height) != Success) {
+                        syslog(LOG_ERR, "XPutImage failed for frame %d\n", frame_count);
+                        fprintf(stderr, "XPutImage failed for frame %d\n", frame_count);
+                        XFreeGC(ctx->display, gc);
+                        XFreePixmap(ctx->display, pixmap);
+                        XDestroyImage(ximage);
+                        return -1;
+                }
+
+                XCopyArea(ctx->display, pixmap, ctx->root_pixmap, ctx->root_gc, 0, 0, width, height, ctx->monitor_x, ctx->monitor_y);
                 XFreeGC(ctx->display, gc);
                 XFreePixmap(ctx->display, pixmap);
-                XDestroyImage(ximage);
-                return -1;
         }
 
-        XCopyArea(ctx->display, pixmap, ctx->root_pixmap, ctx->root_gc, 0, 0, width, height, ctx->monitor_x, ctx->monitor_y);
+        // Update root window properties
         XSetWindowBackgroundPixmap(ctx->display, ctx->root, ctx->root_pixmap);
         XChangeProperty(ctx->display, ctx->root, ctx->xrootpmap_id, XA_PIXMAP, 32, PropModeReplace,
                         (unsigned char *)&ctx->root_pixmap, 1);
@@ -269,8 +293,6 @@ int display_frame(Context *ctx, uint8_t *data, int width, int height, int frame_
         XClearWindow(ctx->display, ctx->root);
         XFlush(ctx->display);
 
-        XFreeGC(ctx->display, gc);
-        XFreePixmap(ctx->display, pixmap);
         XDestroyImage(ximage); // Frees ximage_buffer
         return 0;
 }
