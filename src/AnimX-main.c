@@ -665,6 +665,7 @@ void *fifo_reader_thread(void *arg) {
                                                 wd->running = 0;
                                         } else {
                                                 syslog(LOG_INFO, "FIFO reader: Started new worker with wp=%s, mon=%d, mode=%d", wd->wp, wd->mon, (int)wd->mode);
+                                                write_config_file();
                                         }
                                 }
                         }
