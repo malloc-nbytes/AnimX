@@ -55,14 +55,17 @@ static int get_video_stream_index(AVFormatContext *fmt_ctx) {
 
 static AVFormatContext *create_avformat_ctx(const char *video_fp) {
         AVFormatContext *fmt_ctx = NULL;
-        if (avformat_open_input(&fmt_ctx, video_fp, NULL, NULL) < 0) {
-                syslog(LOG_ERR, "Could not open video file: %s, %s\n", video_fp, strerror(errno));
-                fprintf(stderr, "Could not open video file: %s, %s\n", video_fp, strerror(errno));
+        int ret = avformat_open_input(&fmt_ctx, video_fp, NULL, NULL);
+        if (ret < 0) {
+                char err_buf[128];
+                av_strerror(ret, err_buf, sizeof(err_buf));
+                syslog(LOG_ERR, "Could not open video file: %s, error: %s\n", video_fp, err_buf);
+                fprintf(stderr, "Could not open video file: %s, error: %s\n", video_fp, err_buf);
                 return NULL;
         }
         if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
-                syslog(LOG_ERR, "Could not find stream info\n");
-                fprintf(stderr, "Could not find stream info\n");
+                syslog(LOG_ERR, "Could not find stream info for %s\n", video_fp);
+                fprintf(stderr, "Could not find stream info for %s\n", video_fp);
                 avformat_close_input(&fmt_ctx);
                 return NULL;
         }

@@ -113,12 +113,14 @@ static void init_thread_specific(void) {
 }
 
 static int is_single_frame(Context *ctx) {
-        // Check if the input is single frame (image)
-        if (ctx->fmt_ctx->duration != AV_NOPTS_VALUE && ctx->fmt_ctx->duration <= AV_TIME_BASE) {
-                return 1;
+        // Check if the codec is an image codec
+        AVCodecParameters *codec_par = ctx->fmt_ctx->streams[ctx->video_stream_idx]->codecpar;
+        if (codec_par->codec_id == AV_CODEC_ID_PNG || codec_par->codec_id == AV_CODEC_ID_MJPEG ||
+            codec_par->codec_id == AV_CODEC_ID_BMP || codec_par->codec_id == AV_CODEC_ID_GIF) {
+                return 1; // Assume single frame for known image codecs
         }
 
-        // Alternatively, try decoding to count frames
+        // Fallback: decode to count frames
         AVPacket *packet = av_packet_alloc();
         if (!packet) {
                 syslog(LOG_ERR, "Failed to allocate packet for frame count");
@@ -139,7 +141,6 @@ static int is_single_frame(Context *ctx) {
                                         frame_count++;
                                         if (frame_count > 1) {
                                                 av_packet_unref(packet);
-                                                // Restore format context position
                                                 avformat_seek_file(ctx->fmt_ctx, video_stream_idx, INT64_MIN, start_pos, INT64_MAX, 0);
                                                 av_packet_free(&packet);
                                                 return 0; // More than one frame, not an image
