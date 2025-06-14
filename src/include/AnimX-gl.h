@@ -1,5 +1,7 @@
-#ifndef GL_H
-#define GL_H
+#ifndef ANIMX_GL_H
+#define ANIMX_GL_H
+
+#include <stdint.h>
 
 extern struct {
         uint32_t flags;
@@ -10,4 +12,4 @@ extern struct {
         int fps;
 } g_config;
 
-#endif // GL_H
+#endif // ANIMX_GL_H

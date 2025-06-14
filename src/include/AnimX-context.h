@@ -1,5 +1,5 @@
-#ifndef CONTEXT_H
-#define CONTEXT_H
+#ifndef ANIMX_CONTEXT_H
+#define ANIMX_CONTEXT_H
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -39,4 +39,4 @@ typedef struct {
 void cleanup_context(Context *ctx);
 int init_context(Context *ctx, int monitor_index, const char *video_mp4);
 
-#endif // CONTEXT_H
+#endif // ANIMX_CONTEXT_H

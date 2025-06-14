@@ -1,5 +1,5 @@
-#ifndef FLAG_H
-#define FLAG_H
+#ifndef ANIMX_FLAG_H
+#define ANIMX_FLAG_H
 
 #define FLAG_1HY_HELP 'h'
 #define FLAG_1HY_DAEMON 'd'
@@ -19,4 +19,4 @@ typedef enum {
 
 void dump_flag_info(const char *name);
 
-#endif // FLAG_H
+#endif // ANIMX_FLAG_H

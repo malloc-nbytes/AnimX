@@ -34,6 +34,7 @@
 #include "AnimX-context.h"
 #include "AnimX-flag.h"
 #include "AnimX-utils.h"
+#include "AnimX-io.h"
 #include "dyn_array.h"
 #define CLAP_IMPL
 #include "clap.h"
@@ -59,7 +60,7 @@ struct {
         .wp = NULL,
         .mon = -2,
         .mode = MODE_STREAM,
-        .maxmem = 0.f,
+        .maxmem = 999.f,
         .fps = 30,
 };
 
@@ -860,6 +861,8 @@ static void daemonize(void) {
 static void signal_handler(int sig) {
         if (sig == SIGTERM) {
                 syslog(LOG_INFO, "Received SIGTERM, shutting down.");
+                syslog(LOG_INFO, "Writing config file.");
+                write_config_file();
                 closelog();
 
                 unlink(PID_PATH);
@@ -1151,6 +1154,8 @@ void send_msg(char **msg, size_t len) {
 int main(int argc, char *argv[]) {
         --argc, ++argv;
 
+        read_config_file();
+
         char **orig_argv = argv;
         int orig_argc = argc;
 
@@ -1258,9 +1263,10 @@ int main(int argc, char *argv[]) {
                         // If single frame and not in daemon mode, exit
                         if (result == 1) {
                                 printf("Applied single-frame image, exiting\n");
-                                free(g_config.wp);
-                                return 0;
                         }
+                        write_config_file();
+                        free(g_config.wp);
+                        return 0;
                 }
                 send_msg(orig_argv, orig_argc);
                 printf("sent configuration to daemon, applying changes...\n");

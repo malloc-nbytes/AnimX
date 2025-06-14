@@ -1,5 +1,5 @@
-#ifndef UTILS_H
-#define UTILS_H
+#ifndef ANIMX_UTILS_H
+#define ANIMX_UTILS_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,4 +19,4 @@
 int str_isdigit(const char *s);
 char *resolve(const char *fp);
 
-#endif // UTILS_H
+#endif // ANIMX_UTILS_H
