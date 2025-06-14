@@ -3,6 +3,17 @@
 #include "AnimX-flag.h"
 #include "AnimX-utils.h"
 
+static void fps_info(void) {
+        printf("--help(%s):\n", FLAG_2HY_FPS);
+        printf("    Set the FPS of the wallpaper. Setting it to a higher value will\n");
+        printf("    drastically increase CPU usage. Meanwhile, setting it lower\n");
+        printf("    can save a lot of resources. If this is unset, it will default to 30.\n\n");
+        printf("    Example:\n");
+        printf("        AnimX --fps=30\n");
+        printf("        AnimX --fps=60\n");
+        printf("        AnimX --fps=15\n");
+}
+
 static void help_info(void) {
         printf("--help(%c, %s):\n", FLAG_1HY_HELP, FLAG_2HY_HELP);
         printf("    Show the help menu or help on individual flags with `--help=<flag>|*`.\n\n");
@@ -15,17 +26,18 @@ static void help_info(void) {
 
 static void mon_info(void) {
         printf("--help(%s):\n", FLAG_2HY_MON);
-        printf("    Set the monitor index. If left unset, it will combine\n");
-        printf("    all monitors available into one.\n");
-        printf("    You can also set this option to (-1) to do this.\n\n");
+        printf("    Set the monitor index. If left unset, it will mirror the wallpaper on all monitors.\n");
+        printf("    You can also set this option to (-2) to do this.\n");
+        printf("    If you want to stretch the wallpaper across all monitors, use the (-1) option.\n\n");
         printf("    Warning:\n");
-        printf("        Using the (-1) option will significantly increase\n");
+        printf("        Using the (-1) options will significantly increase\n");
         printf("        memory usage. It is recommended to use --mode=stream\n");
         printf("        if you do not have a lot of RAM (or use --maxmem option).\n\n");
         printf("    Example:\n");
         printf("        AnimX --mon=1\n");
         printf("        AnimX --mon=2\n");
         printf("        AnimX --mon=-1 # combine all monitors into one monitor\n");
+        printf("        AnimX --mon=-2 # mirror wallpaper\n");
 }
 
 static void mode_info(void) {
@@ -101,6 +113,7 @@ void dump_flag_info(const char *name) {
                 maxmem_info,
                 daemon_info,
                 stop_info,
+                fps_info,
         };
 
 #define OHYEQ(n, flag, actual) ((n) == 1 && (flag)[0] == (actual))
@@ -117,6 +130,8 @@ void dump_flag_info(const char *name) {
                 infos[4]();
         } else if (!strcmp(name, FLAG_2HY_STOP)) {
                 infos[5]();
+        } else if (!strcmp(name, FLAG_2HY_FPS)) {
+                infos[6]();
         } else if (OHYEQ(n, name, '*')) {
                 for (size_t i = 0; i < sizeof(infos)/sizeof(*infos); ++i) {
                         if (i != 0) putchar('\n');

@@ -6,6 +6,7 @@
 #include <libavutil/imgutils.h>
 
 #include "AnimX-context.h"
+#include "AnimX-gl.h"
 
 static AVCodec *find_codec_decoder(
         AVFormatContext *fmt_ctx,
@@ -303,7 +304,7 @@ int init_context(Context *ctx, int monitor_index, const char *video_mp4) {
         ctx->xrootpmap_id = XInternAtom(ctx->display, "_XROOTPMAP_ID", False);
         ctx->esetroot_pmap_id = XInternAtom(ctx->display, "ESETROOT_PMAP_ID", False);
 
-        ctx->frame_interval = 1.0 / 30.0; // 30 FPS
+        ctx->frame_interval = 1.0 / (double)g_config.fps;
         ctx->video_time_base = av_q2d(ctx->fmt_ctx->streams[ctx->video_stream_idx]->time_base);
         ctx->frame_duration = ctx->frame_interval / ctx->video_time_base;
 

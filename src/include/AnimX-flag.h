@@ -10,6 +10,7 @@
 #define FLAG_2HY_MAXMEM "maxmem"
 #define FLAG_2HY_DAEMON "daemon"
 #define FLAG_2HY_STOP "stop"
+#define FLAG_2HY_FPS "fps"
 
 typedef enum {
         FT_MAXMEM = 1 << 0,

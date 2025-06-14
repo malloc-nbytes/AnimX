@@ -34,23 +34,33 @@
 #include "AnimX-context.h"
 #include "AnimX-flag.h"
 #include "AnimX-utils.h"
-#include "AnimX-gl.h"
 #include "dyn_array.h"
 #define CLAP_IMPL
 #include "clap.h"
 
-static struct {
+#define FIFO_PATH "/tmp/AnimX.fifo"
+#define LOG_PATH "/tmp/log/AnimX.log"
+#define PID_PATH "/tmp/AnimX.pid"
+
+enum {
+        MODE_LOAD = 0,
+        MODE_STREAM,
+};
+
+struct {
         uint32_t flags;
         char *wp;
         int mon;
-        Mode_Type mode;
+        int mode; // uses Mode_Type
         double maxmem;
+        int fps;
 } g_config = {
         .flags = 0x00000000,
         .wp = NULL,
         .mon = -2,
         .mode = MODE_STREAM,
         .maxmem = 0.f,
+        .fps = 30,
 };
 
 typedef struct {
@@ -88,7 +98,7 @@ typedef struct {
         int stop;                // Flag to signal worker to stop
         char *wp;                // Current wallpaper path
         int mon;                 // Current monitor index
-        Mode_Type mode;          // Current mode
+        int mode;                // Current mode
         double maxmem;           // Current max memory
         Thread_Data *td;         // Thread_Data for run_stream
 } Worker_Data;
@@ -182,7 +192,7 @@ void *worker_thread(void *arg) {
 
                 char *wp = NULL;
                 int mon;
-                Mode_Type mode;
+                int mode;
                 double maxmem;
                 pthread_mutex_lock(&wd->mutex);
                 if (wd->wp) wp = strdup(wd->wp);
@@ -430,7 +440,7 @@ int run_load_all(int monitor_index, const char *video_mp4) {
 
                 long end_time = get_time_us();
                 long processing_time = end_time - start_time;
-                long target_time = 33333; // 33.33ms -> ~30 FPS
+                long target_time = (long)(1.0 / g_config.fps * 1000000.0); // fps
                 long sleep_time = target_time - processing_time;
 
                 if (sleep_time > 0) {
@@ -561,7 +571,7 @@ void *consumer_thread(void *arg) {
                 frame_count++;
                 long end_time = get_time_us();
                 long processing_time = end_time - start_time;
-                long target_time = 33333; // 33.33ms -> ~30 FPS
+                long target_time =(long)(1.0 / g_config.fps * 1000000.0); // fps
                 long sleep_time = target_time - processing_time;
 
                 if (sleep_time > 0) {
@@ -893,10 +903,9 @@ static void usage(void) {
         printf("        --%s=<int>            set the display monitor or (-1) to combine all monitors into one single monitor\n", FLAG_2HY_MON);
         printf("        --%s=<stream|load>   set the frame generation mode\n", FLAG_2HY_MODE);
         printf("        --%s=<float>       set a maximum memory limit for --mode=load\n", FLAG_2HY_MAXMEM);
+        printf("        --%s=<int>            set the FPS\n", FLAG_2HY_FPS);
         printf("        --%s                 stop the running the daemon\n", FLAG_2HY_STOP);
 }
-
-#include <ctype.h> // For isprint()
 
 static void parse_daemon_sender_msg(const char *msg) {
         while (*msg) {
@@ -1155,6 +1164,14 @@ int main(int argc, char *argv[]) {
                         } else {
                                 err_wargs("--mode expects either `stream` or `load`, not `%s`", arg.eq);
                         }
+                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_FPS)) {
+                        if (!arg.eq) {
+                                err("--fps expects a value after equals (=)\n");
+                        }
+                        if (!str_isdigit(arg.eq)) {
+                                err_wargs("--fps expects an integer, not `%s`\n", arg.eq);
+                        }
+                        g_config.fps = atoi(arg.eq);
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_STOP)) {
                         stop_daemon();
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_MAXMEM)) {
