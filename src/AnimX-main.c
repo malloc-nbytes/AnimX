@@ -318,12 +318,6 @@ int run_load_all(int monitor_index, const char *video_mp4) {
 
         // Multi-frame logic
         dyn_array(Image, images);
-        if (!images.data) {
-                syslog(LOG_ERR, "Failed to allocate image array\n");
-                fprintf(stderr, "Failed to allocate image array\n");
-                cleanup_context(&ctx);
-                return -1;
-        }
         int image_count = 0;
         int64_t next_pts = 0;
         const char loading[] = {'|', '/', '-', '\\', '|'};
