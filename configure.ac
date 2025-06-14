@@ -31,7 +31,7 @@ AC_DEFINE_UNQUOTED([COMPILER_VERSION], ["`$CC --version | head -n1`"], [Version 
 AC_DEFINE_UNQUOTED([COMPILER_PATH], ["`which $CC`"], [Full path to the C compiler])
 
 # Add include directory, optimization flags, and compiler standards
-AC_SUBST([AM_CFLAGS], ["-I${srcdir}/include -O3 -march=native -pedantic -Werror -Wextra -Wall -fsanitize=thread -D_FORTIFY_SOURCE=2 -fstack-protector-strong -fno-strict-aliasing"])
+AC_SUBST([AM_CFLAGS], ["-I${srcdir}/include -O3 -march=native -pedantic -Werror -Wextra -Wall"])
 AC_SUBST([AM_LDFLAGS], ["$DEPS_LIBS"])
 
 # Enable debug mode if --enable-debug is passed
