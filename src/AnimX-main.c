@@ -100,6 +100,7 @@ typedef struct {
         int mon;                 // Current monitor index
         int mode;                // Current mode
         double maxmem;           // Current max memory
+        int fps;                 // Current fps
         Thread_Data *td;         // Thread_Data for run_stream
 } Worker_Data;
 
@@ -166,6 +167,7 @@ static void init_worker_data(Worker_Data *wd) {
         wd->mode = MODE_STREAM;
         wd->maxmem = 0.f;
         wd->td = NULL;
+        wd->fps = 30;
 }
 
 static void cleanup_worker_data(Worker_Data *wd) {
@@ -194,11 +196,13 @@ void *worker_thread(void *arg) {
                 int mon;
                 int mode;
                 double maxmem;
+                int fps;
                 pthread_mutex_lock(&wd->mutex);
                 if (wd->wp) wp = strdup(wd->wp);
                 mon = wd->mon;
                 mode = wd->mode;
                 maxmem = wd->maxmem;
+                fps = wd->fps;
                 pthread_mutex_unlock(&wd->mutex);
 
                 if (mode == MODE_STREAM) {
@@ -603,7 +607,7 @@ void *fifo_reader_thread(void *arg) {
                         parse_daemon_sender_msg(buf);
 
                         pthread_mutex_lock(&wd->mutex);
-                        if (g_config.wp && (!wd->wp || strcmp(g_config.wp, wd->wp) != 0 || g_config.mon != wd->mon || g_config.mode != wd->mode || g_config.maxmem != wd->maxmem)) {
+                        if (g_config.wp && (!wd->wp || strcmp(g_config.wp, wd->wp) != 0 || g_config.mon != wd->mon || g_config.mode != wd->mode || g_config.maxmem != wd->maxmem || g_config.fps != wd->fps)) {
                                 if (wd->running) {
                                         syslog(LOG_INFO, "FIFO reader: Stopping existing worker");
                                         wd->stop = 1;
@@ -966,7 +970,22 @@ static void parse_daemon_sender_msg(const char *msg) {
                                 }
                                 g_config.mon = atoi(rest);
                                 syslog(LOG_INFO, "set monitor to %d", g_config.mon);
-                        } else {
+                        } else if (!strcmp(cmd, "fps")) {
+                                if (!iseq) {
+                                        syslog(LOG_ERR, "option `%s` requires equals (=)", cmd);
+                                        err_wargs("option `%s` requires equals (=)", cmd);
+                                }
+                                if (!str_isdigit(rest)) {
+                                        syslog(LOG_ERR, "option `%s` expects a number, got `%s`", cmd, rest);
+                                        err_wargs("option `%s` expects a number, got `%s`", cmd, rest);
+                                }
+                                g_config.fps = atoi(rest);
+                                syslog(LOG_INFO, "set fps to %d", g_config.fps);
+                        } else if (!strcmp(cmd, "maxmem")) {
+                                syslog(LOG_ERR, "option `%s` is unimplemented for sending to daemon (=)", cmd);
+                                err_wargs("option `%s` is unimplemented for sending to daemon (=)", cmd);
+                        }
+                        else {
                                 syslog(LOG_ERR, "Unknown option: %s", cmd);
                                 err_wargs("Unknown  option: %s", cmd);
                         }
