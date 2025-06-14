@@ -1,7 +1,33 @@
+/*
+ * AnimX: Animated Wallpapers for X
+ * Copyright (C) 2025  malloc-nbytes
+ * Contact: zdhdev@yahoo.com
+
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, see <https://www.gnu.org/licenses/>.
+*/
+
 #include <string.h>
 
 #include "AnimX-flag.h"
 #include "AnimX-utils.h"
+
+static void copying_info(void) {
+        printf("--help(%s):\n", FLAG_2HY_COPYING);
+        printf("    View the GNU GENERAL PUBLIC LICENSE for copying information.\n");
+        printf("    Example:\n");
+        printf("        AnimX --copying\n");
+}
 
 static void restore_info(void) {
         printf("--help(%s):\n", FLAG_2HY_RESTORE);
@@ -122,6 +148,7 @@ void dump_flag_info(const char *name) {
                 stop_info,
                 fps_info,
                 restore_info,
+                copying_info,
         };
 
 #define OHYEQ(n, flag, actual) ((n) == 1 && (flag)[0] == (actual))
@@ -142,7 +169,10 @@ void dump_flag_info(const char *name) {
                 infos[6]();
         }  else if (!strcmp(name, FLAG_2HY_RESTORE)) {
                 infos[7]();
-        } else if (OHYEQ(n, name, '*')) {
+        } else if (!strcmp(name, FLAG_2HY_COPYING)) {
+                infos[8]();
+        }
+        else if (OHYEQ(n, name, '*')) {
                 for (size_t i = 0; i < sizeof(infos)/sizeof(*infos); ++i) {
                         if (i != 0) putchar('\n');
                         infos[i]();

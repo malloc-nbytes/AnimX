@@ -1,3 +1,22 @@
+/*
+ * AnimX: Animated Wallpapers for X
+ * Copyright (C) 2025  malloc-nbytes
+ * Contact: zdhdev@yahoo.com
+
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, see <https://www.gnu.org/licenses/>.
+*/
+
 // glibc
 #include <assert.h>
 #include <stdio.h>
@@ -38,6 +57,8 @@
 #include "dyn_array.h"
 #define CLAP_IMPL
 #include "clap.h"
+#include "config.h"
+#include "AnimX-copying.h"
 
 #define FIFO_PATH "/tmp/AnimX.fifo"
 #define LOG_PATH "/tmp/log/AnimX.log"
@@ -904,6 +925,11 @@ static void stop_daemon(void) {
 }
 
 static void usage(void) {
+        printf("AnimX version " VERSION ", Copyright (C) 2025 malloc-nbytes\n");
+        printf("AnimX comes with ABSOLUTELY NO WARRANTY.\n");
+        printf("This is free software, and you are welcome to redistribute it\n");
+        printf("under certain conditions; see --copying\n\n");
+
         printf("AnimX <walpaper_filepath> [options...]\n");
         printf("Options:\n");
         printf("    -%c, --%s[=<flag>|*]      display this message or get help on individual flags or all (*)\n", FLAG_1HY_HELP, FLAG_2HY_HELP);
@@ -914,6 +940,7 @@ static void usage(void) {
         printf("        --%s=<int>            set the FPS\n", FLAG_2HY_FPS);
         printf("        --%s                 stop the running the daemon\n", FLAG_2HY_STOP);
         printf("        --%s              restore the last configuration used\n", FLAG_2HY_RESTORE);
+        printf("        --%s              see COPYING information\n", FLAG_2HY_COPYING);
 }
 
 static void parse_daemon_sender_msg(const char *msg) {
@@ -1220,7 +1247,11 @@ int main(int argc, char *argv[]) {
                         g_config.flags |= FT_DAEMON;
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_RESTORE)) {
                         read_config_file();
-                } else if (arg.hyphc == 0) {
+                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_COPYING)) {
+                        printf(COPYING);
+                        exit(0);
+                }
+                else if (arg.hyphc == 0) {
                         if (g_config.wp) {
                                 err_wargs("only one wallpaper is allowed, already have: %s", g_config.wp);
                         }
