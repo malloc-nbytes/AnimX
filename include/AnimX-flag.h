@@ -3,6 +3,7 @@
 
 #define FLAG_1HY_HELP 'h'
 #define FLAG_1HY_DAEMON 'd'
+#define FLAG_1HY_VERSION 'v'
 
 #define FLAG_2HY_HELP "help"
 #define FLAG_2HY_MON "mon"
@@ -13,6 +14,7 @@
 #define FLAG_2HY_FPS "fps"
 #define FLAG_2HY_RESTORE "restore"
 #define FLAG_2HY_COPYING "copying"
+#define FLAG_2HY_VERSION "version"
 
 typedef enum {
         FT_MAXMEM = 1 << 0,

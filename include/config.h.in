@@ -1,5 +1,17 @@
 /* include/config.h.in.  Generated from configure.ac by autoheader.  */
 
+/* Compiler flags used */
+#undef COMPILER_FLAGS
+
+/* Name of the C compiler */
+#undef COMPILER_NAME
+
+/* Full path to the C compiler */
+#undef COMPILER_PATH
+
+/* Version of the C compiler */
+#undef COMPILER_VERSION
+
 /* Name of package */
 #undef PACKAGE
 

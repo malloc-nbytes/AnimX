@@ -232,7 +232,7 @@ void *worker_thread(void *arg) {
                         syslog(LOG_INFO, "Worker: Starting run_stream with wp=%s, mon=%d", wp ? wp : "(null)", mon);
                         run_stream(mon, wp);
                 } else if (mode == MODE_LOAD) {
-                        syslog(LOG_INFO, "Worker: Starting run_load_all with wp=%s, mon=%d, maxmem=%f", wp ? wp : "(null)", mon, maxmem);
+                        syslog(LOG_INFO, "Worker: Starting run_load_all with wp=%s, mon=%d, maxmem=%f, fps=%d", wp ? wp : "(null)", mon, maxmem, fps);
                         run_load_all(mon, wp);
                 }
 
@@ -844,9 +844,9 @@ static void daemonize(void) {
 
         // Redirect std streams to /dev/null
         open("/dev/null", O_RDWR); // stdin
-        int _ =dup(0);                    // stdout
-        _ = dup(0);                    // stderr
-
+        int _ = dup(0);                    // stdout
+            _ = dup(0);                    // stderr
+        (void)_;
 
         // Open PID file
         g_pid_fd = open(PID_PATH, O_RDWR | O_CREAT, 0640);
@@ -931,11 +931,23 @@ static void usage(void) {
         printf("This is free software, and you are welcome to redistribute it\n");
         printf("under certain conditions; see --copying\n\n");
 
+        printf("Compilation Information:\n");
+        printf("| cc: " COMPILER_NAME "\n");
+        printf("| path: " COMPILER_PATH "\n");
+        printf("| ver.: " COMPILER_VERSION "\n");
+        printf("| flags: " COMPILER_FLAGS "\n\n");
+
+        /* printf("Compiler: " COMPILER_NAME "\n"); */
+        /* printf("Compiler Path: " COMPILER_PATH "\n"); */
+        /* printf("Compiler Version: " COMPILER_VERSION "\n"); */
+        /* printf("Compile Flags: " COMPILER_FLAGS "\n\n"); */
+
         printf("AnimX <walpaper_filepath> [options...]\n");
         printf("Options:\n");
         printf("    -%c, --%s[=<flag>|*]      display this message or get help on individual flags or all (*)\n", FLAG_1HY_HELP, FLAG_2HY_HELP);
+        printf("    -%c, --%s              show version information\n", FLAG_1HY_VERSION, FLAG_2HY_VERSION);
         printf("    -%c, --%s               start the daemon\n", FLAG_1HY_DAEMON, FLAG_2HY_DAEMON);
-        printf("        --%s=<int>            set the display monitor or (-1) to combine all monitors into one single monitor\n", FLAG_2HY_MON);
+        printf("        --%s=<int>            set the display monitor or (-1) to combine all monitors, or (-2) to mirror on all monitors\n", FLAG_2HY_MON);
         printf("        --%s=<stream|load>   set the frame generation mode\n", FLAG_2HY_MODE);
         printf("        --%s=<float>       set a maximum memory limit for --mode=load\n", FLAG_2HY_MAXMEM);
         printf("        --%s=<int>            set the FPS\n", FLAG_2HY_FPS);
@@ -1180,6 +1192,22 @@ void send_msg(char **msg, size_t len) {
         dyn_array_free(buf);
 }
 
+static void version(void) {
+        printf("AnimX v" VERSION "\n");
+        exit(0);
+}
+
+static void copying(void) {
+        printf(COPYING1);
+        printf(COPYING2);
+        printf(COPYING3);
+        printf(COPYING4);
+        printf(COPYING5);
+        printf(COPYING6);
+        exit(0);
+}
+
+
 int main(int argc, char *argv[]) {
         --argc, ++argv;
 
@@ -1199,6 +1227,8 @@ int main(int argc, char *argv[]) {
                         exit(0);
                 } else if (arg.hyphc == 1 && arg.start[0] == FLAG_1HY_DAEMON) {
                         g_config.flags |= FT_DAEMON;
+                } else if (arg.hyphc == 1 && arg.start[0] == FLAG_1HY_VERSION) {
+                        version();
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_HELP)) {
                         if (arg.eq) {
                                 dump_flag_info(arg.eq);
@@ -1206,6 +1236,8 @@ int main(int argc, char *argv[]) {
                                 usage();
                         }
                         exit(0);
+                } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_VERSION)) {
+                        version();
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_MON)) {
                         if (!arg.eq) {
                                 err("--mon expects a value after equals (=)\n");
@@ -1249,8 +1281,7 @@ int main(int argc, char *argv[]) {
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_RESTORE)) {
                         read_config_file();
                 } else if (arg.hyphc == 2 && !strcmp(arg.start, FLAG_2HY_COPYING)) {
-                        printf(COPYING);
-                        exit(0);
+                        copying();
                 }
                 else if (arg.hyphc == 0) {
                         if (g_config.wp) {

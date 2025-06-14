@@ -428,11 +428,43 @@ as_fn_error ()
   as_fn_exit $as_status
 } # as_fn_error
 
+if expr a : '\(a\)' >/dev/null 2>&1 &&
+   test "X`expr 00001 : '.*\(...\)'`" = X001; then
+  as_expr=expr
+else
+  as_expr=false
+fi
+
+if (basename -- /) >/dev/null 2>&1 && test "X`basename -- / 2>&1`" = "X/"; then
+  as_basename=basename
+else
+  as_basename=false
+fi
+
 if (as_dir=`dirname -- /` && test "X$as_dir" = X/) >/dev/null 2>&1; then
   as_dirname=dirname
 else
   as_dirname=false
 fi
+
+as_me=`$as_basename -- "$0" ||
+$as_expr X/"$0" : '.*/\([^/][^/]*\)/*$' \| \
+	 X"$0" : 'X\(//\)$' \| \
+	 X"$0" : 'X\(/\)' \| . 2>/dev/null ||
+printf "%s\n" X/"$0" |
+    sed '/^.*\/\([^/][^/]*\)\/*$/{
+	    s//\1/
+	    q
+	  }
+	  /^X\/\(\/\/\)$/{
+	    s//\1/
+	    q
+	  }
+	  /^X\/\(\/\).*/{
+	    s//\1/
+	    q
+	  }
+	  s/.*/./; q'`
 
 # Avoid depending upon Character Ranges.
 as_cr_letters='abcdefghijklmnopqrstuvwxyz'
@@ -580,6 +612,7 @@ ac_subst_vars='am__EXEEXT_FALSE
 am__EXEEXT_TRUE
 LTLIBOBJS
 LIBOBJS
+ANIMX_SOURCES
 AM_LDFLAGS
 AM_CFLAGS
 DEPS_LIBS
@@ -4301,6 +4334,11 @@ fi
 ac_config_headers="$ac_config_headers include/config.h"
 
 
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: AnimX is licensed under the GNU General Public License v2 or later." >&5
+printf "%s\n" "$as_me: AnimX is licensed under the GNU General Public License v2 or later." >&6;}
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: It uses FFmpeg libraries, licensed under GPL v2+." >&5
+printf "%s\n" "$as_me: It uses FFmpeg libraries, licensed under GPL v2+." >&6;}
+
 # Check for pkg-config
 # Extract the first word of "pkg-config", so it can be a program name with args.
 set dummy pkg-config; ac_word=$2
@@ -4694,8 +4732,23 @@ printf "%s\n" "yes" >&6; }
 
 fi
 
-# Add include directory and optimization flags
-AM_CFLAGS="-I${srcdir}/include -O3"
+# Define compiler information as macros
+
+printf "%s\n" "#define COMPILER_NAME \"$CC\"" >>confdefs.h
+
+
+cat >>confdefs.h <<_ACEOF
+#define COMPILER_VERSION "`$CC --version | head -n1`"
+_ACEOF
+
+
+cat >>confdefs.h <<_ACEOF
+#define COMPILER_PATH "`which $CC`"
+_ACEOF
+
+
+# Add include directory, optimization flags, and compiler standards
+AM_CFLAGS="-I${srcdir}/include -O3 -march=native -pedantic -Werror -Wextra -Wall -fsanitize=thread -D_FORTIFY_SOURCE=2 -fstack-protector-strong -fno-strict-aliasing"
 
 AM_LDFLAGS="$DEPS_LIBS"
 
@@ -4710,6 +4763,13 @@ then :
      *) as_fn_error $? "bad value ${enableval} for --enable-debug" "$LINENO" 5 ;;
    esac
 fi
+
+
+printf "%s\n" "#define COMPILER_FLAGS \"$AM_CFLAGS\"" >>confdefs.h
+
+
+# Collect source files
+ANIMX_SOURCES=$(ls src/*.c | tr '\n' ' ')
 
 
 ac_config_files="$ac_config_files Makefile src/Makefile"

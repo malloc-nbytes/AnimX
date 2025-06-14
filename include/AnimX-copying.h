@@ -1,7 +1,7 @@
 #ifndef ANIMX_COPYING_H
 #define ANIMX_COPYING_H
 
-#define COPYING \
+#define COPYING1 \
 "                    GNU GENERAL PUBLIC LICENSE\n" \
 "                       Version 2, June 1991\n" \
                     "\n"                                      \
@@ -59,8 +59,9 @@
                     "\n"                                      \
 "  The precise terms and conditions for copying, distribution and\n" \
 "modification follow.\n" \
-                    "\n"                                      \
-"                    GNU GENERAL PUBLIC LICENSE\n" \
+                    "\n"
+#define COPYING2 \
+"                    GNU GENERAL PUBLIC LICENSE\n"                    \
 "   TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION\n" \
                     "\n"                                      \
 "  0. This License applies to any program or other work which contains\n" \
@@ -114,7 +115,8 @@
 "    License.  (Exception: if the Program itself is interactive but\n" \
 "    does not normally print such an announcement, your work based on\n" \
 "    the Program is not required to print an announcement.)\n" \
-                    "\n"                                      \
+                    "\n"
+#define COPYING3 \
 "These requirements apply to the modified work as a whole.  If\n" \
 "identifiable sections of that work are not derived from the Program,\n" \
 "and can be reasonably considered independent and separate works in\n" \
@@ -155,7 +157,8 @@
 "    allowed only for noncommercial distribution and only if you\n" \
 "    received the program in object code or executable form with such\n" \
 "    an offer, in accord with Subsection b above.)\n" \
-                    "\n"                                      \
+                    "\n"
+#define COPYING4 \
 "The source code for a work means the preferred form of the work for\n" \
 "making modifications to it.  For an executable work, complete source\n" \
 "code means all the source code for all modules it contains, plus any\n" \
@@ -210,7 +213,8 @@
 "all those who receive copies directly or indirectly through you, then\n" \
 "the only way you could satisfy both it and this License would be to\n" \
 "refrain entirely from distribution of the Program.\n" \
-                    "\n"                                      \
+                    "\n"
+#define COPYING5 \
 "If any portion of this section is held invalid or unenforceable under\n" \
 "any particular circumstance, the balance of the section is intended to\n" \
 "apply and the section as a whole is intended to apply in other\n" \
@@ -258,7 +262,8 @@
 "make exceptions for this.  Our decision will be guided by the two goals\n" \
 "of preserving the free status of all derivatives of our free software and\n" \
 "of promoting the sharing and reuse of software generally.\n" \
-                    "\n"                                      \
+                    "\n"
+#define COPYING6 \
 "                           NO WARRANTY\n" \
                     "\n"                                      \
 "  11. BECAUSE THE PROGRAM IS LICENSED FREE OF CHARGE, THERE IS NO WARRANTY\n" \

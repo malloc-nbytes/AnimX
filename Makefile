@@ -204,9 +204,10 @@ distcleancheck_listfiles = \
             \( -name .nfs* -o -name .smb* -o -name .__afs* \) \) -print
 ACLOCAL = ${SHELL} '/home/zdh/dev/AnimX/missing' aclocal-1.17
 AMTAR = $${TAR-tar}
-AM_CFLAGS = -I./include -O3
+AM_CFLAGS = -I./include -O3 -march=native -pedantic -Werror -Wextra -Wall -fsanitize=thread -D_FORTIFY_SOURCE=2 -fstack-protector-strong -fno-strict-aliasing
 AM_DEFAULT_VERBOSITY = 1
 AM_LDFLAGS = -lavformat -lavcodec -lswscale -lavutil -lImlib2 -lXrandr -lX11
+ANIMX_SOURCES = src/AnimX-context.c src/AnimX-flag.c src/AnimX-io.c src/AnimX-main.c src/AnimX-utils.c 
 AUTOCONF = ${SHELL} '/home/zdh/dev/AnimX/missing' autoconf
 AUTOHEADER = ${SHELL} '/home/zdh/dev/AnimX/missing' autoheader
 AUTOMAKE = ${SHELL} '/home/zdh/dev/AnimX/missing' automake-1.17

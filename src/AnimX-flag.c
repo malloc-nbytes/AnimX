@@ -22,9 +22,17 @@
 #include "AnimX-flag.h"
 #include "AnimX-utils.h"
 
+static void version_info(void) {
+        printf("--help(%c, %s):\n", FLAG_1HY_VERSION, FLAG_2HY_VERSION);
+        printf("    See verison information.\n\n");
+        printf("    Example:\n");
+        printf("        AnimX -v\n");
+        printf("        AnimX --version\n");
+}
+
 static void copying_info(void) {
         printf("--help(%s):\n", FLAG_2HY_COPYING);
-        printf("    View the GNU GENERAL PUBLIC LICENSE for copying information.\n");
+        printf("    View the GNU GENERAL PUBLIC LICENSE for copying information.\n\n");
         printf("    Example:\n");
         printf("        AnimX --copying\n");
 }
@@ -149,6 +157,7 @@ void dump_flag_info(const char *name) {
                 fps_info,
                 restore_info,
                 copying_info,
+                version_info,
         };
 
 #define OHYEQ(n, flag, actual) ((n) == 1 && (flag)[0] == (actual))
@@ -171,8 +180,9 @@ void dump_flag_info(const char *name) {
                 infos[7]();
         } else if (!strcmp(name, FLAG_2HY_COPYING)) {
                 infos[8]();
-        }
-        else if (OHYEQ(n, name, '*')) {
+        } else if (OHYEQ(n, name, FLAG_1HY_VERSION) || !strcmp(name, FLAG_2HY_VERSION)) {
+                infos[9]();
+        } else if (OHYEQ(n, name, '*')) {
                 for (size_t i = 0; i < sizeof(infos)/sizeof(*infos); ++i) {
                         if (i != 0) putchar('\n');
                         infos[i]();

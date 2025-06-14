@@ -1,5 +1,5 @@
 # Autotools generated files
-#Makefile
+Makefile
 Makefile.in
 /compile
 /aclocal.m4
@@ -10,7 +10,7 @@ Makefile.in
 /config.h.in
 /include/config.h
 /include/stamp-h1
-#/configure
+/configure
 /depcomp
 /install-sh
 /missing

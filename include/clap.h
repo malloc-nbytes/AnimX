@@ -22,8 +22,8 @@ void clap_init(int argc, char **argv) {
         /* __clap_config.argv = argv; */
         __clap_config.orig_argc = argc;
         __clap_config.argc = argc;
-        __clap_config.argv = (char **)malloc(sizeof(char *)*argc);
-        for (size_t i = 0; i < argc; ++i) {
+        __clap_config.argv = (char **)malloc(sizeof(char *)*(size_t)argc);
+        for (size_t i = 0; i < (size_t)argc; ++i) {
                 __clap_config.argv[i] = strdup(argv[i]);
         }
 }
