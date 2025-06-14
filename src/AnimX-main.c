@@ -982,8 +982,17 @@ static void parse_daemon_sender_msg(const char *msg) {
                                 g_config.fps = atoi(rest);
                                 syslog(LOG_INFO, "set fps to %d", g_config.fps);
                         } else if (!strcmp(cmd, "maxmem")) {
-                                syslog(LOG_ERR, "option `%s` is unimplemented for sending to daemon (=)", cmd);
-                                err_wargs("option `%s` is unimplemented for sending to daemon (=)", cmd);
+                                if (!iseq) {
+                                        syslog(LOG_ERR, "option `%s` requires equals (=)", cmd);
+                                        err_wargs("option `%s` requires equals (=)", cmd);
+                                }
+                                if (!str_isdigit(rest)) {
+                                        syslog(LOG_ERR, "option `%s` expects a number, got `%s`", cmd, rest);
+                                        err_wargs("option `%s` expects a float, got `%s`", cmd, rest);
+                                }
+                                g_config.maxmem = strtod(rest, NULL);
+                                g_config.flags |= FT_MAXMEM;
+                                syslog(LOG_INFO, "set fps to %f", g_config.maxmem);
                         }
                         else {
                                 syslog(LOG_ERR, "Unknown option: %s", cmd);
