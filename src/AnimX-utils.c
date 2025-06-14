@@ -21,6 +21,7 @@ int str_isdigit(const char *s) {
 }
 
 char *resolve(const char *fp) {
+        syslog(LOG_INFO, "resolve() got filepath: %s\n", fp);
         static char rp[PATH_MAX] = {0};
         memset(rp, 0, sizeof(rp)/sizeof(*rp));
         if (!realpath(fp, rp)) {

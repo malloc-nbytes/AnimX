@@ -80,7 +80,7 @@
     struct {                                                       \
         ty *data;                                                  \
         size_t len, cap;                                           \
-    } (name) = { .data = (typeof(ty) *)malloc(sizeof(ty)), .len = 0, .cap = 1 };
+    } (name) = { .data = NULL, .len = 0, .cap = 0 };
 
 //////////////////////////////////////////////////
 // Append to a dynamic array.

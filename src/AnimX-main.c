@@ -16,6 +16,7 @@
 #include <sys/file.h>
 #include <string.h>
 #include <errno.h>
+#include <ctype.h>
 
 // FFmpeg
 #include <libavcodec/avcodec.h>
@@ -879,6 +880,8 @@ static void usage(void) {
         printf("        --%s                 stop the running the daemon\n", FLAG_2HY_STOP);
 }
 
+#include <ctype.h> // For isprint()
+
 static void parse_daemon_sender_msg(const char *msg) {
         while (*msg) {
                 if (*msg == ' ' || *msg == '\n') {
@@ -1061,6 +1064,7 @@ void send_msg(char **msg, size_t len) {
                         dyn_array_append(buf, ' ');
                 }
         }
+        dyn_array_append(buf, '\0');
 
         // Open FIFO in non-blocking mode
         int fd = open(FIFO_PATH, O_WRONLY | O_NONBLOCK);
