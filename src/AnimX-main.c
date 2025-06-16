@@ -927,8 +927,6 @@ static void stop_daemon(void) {
 }
 
 static void usage(void) {
-
-
         printf("      _                 _                ____  ____\n");
         printf("     / \\               (_)              |_  _||_  _|\n");
         printf("    / _ \\     _ .--.   __   _ .--..--.    \\ \\  / /\n");
