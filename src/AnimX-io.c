@@ -127,12 +127,14 @@ void write_config_file(void) {
         char buf[256] = {0};
         dyn_array(char, content);
 
+        // comment
         {
                 char comment[] = "// This is a generated file, changes here will not be saved!";
                 for (size_t i = 0; comment[i]; ++i) dyn_array_append(content, comment[i]);
                 dyn_array_append(content, '\n');
         }
 
+        // wp
         {
                 char cmd[] = "wp";
                 for (size_t i = 0; cmd[i]; ++i) dyn_array_append(content, cmd[i]);
@@ -143,6 +145,7 @@ void write_config_file(void) {
                 } dyn_array_append(content, '\n');
         }
 
+        // mon
         {
                 char cmd[] = "mon";
                 for (size_t i = 0; cmd[i]; ++i) dyn_array_append(content, cmd[i]);
@@ -155,6 +158,7 @@ void write_config_file(void) {
                 memset(buf, 0, sizeof(buf)/sizeof(*buf));
         }
 
+        // mode
         {
                 char cmd[256] = "mode";
                 for (size_t i = 0; cmd[i]; ++i) dyn_array_append(content, cmd[i]);
@@ -171,6 +175,7 @@ void write_config_file(void) {
                 } dyn_array_append(content, '\n');
         }
 
+        // maxmem
         {
                 char cmd[256] = "maxmem";
                 for (size_t i = 0; cmd[i]; ++i) dyn_array_append(content, cmd[i]);
@@ -183,6 +188,7 @@ void write_config_file(void) {
                 memset(buf, 0, sizeof(buf)/sizeof(*buf));
         }
 
+        // fps
         {
                 char cmd[256] = "fps";
                 for (size_t i = 0; cmd[i]; ++i) dyn_array_append(content, cmd[i]);
@@ -195,6 +201,7 @@ void write_config_file(void) {
                 memset(buf, 0, sizeof(buf)/sizeof(*buf));
         }
 
+        // daemon
         {
                 char cmd[256] = "daemon";
                 char true_[] = "true";

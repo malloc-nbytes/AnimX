@@ -730,10 +730,10 @@ int run_stream(int monitor_index, const char *video_mp4) {
                         av_packet_unref(ctx.packet);
                 }
                 cleanup_context(&ctx);
-                return single_frame; // Return 1 for single frame
+                return single_frame; // Single frame
         }
 
-        // Existing multi-frame logic
+        // Multi-frame logic
         Thread_Data td = {0};
         td.ctx = &ctx;
         td.buffer_size = 2;
@@ -843,10 +843,11 @@ static void daemonize(void) {
         close(STDERR_FILENO);
 
         // Redirect std streams to /dev/null
-        open("/dev/null", O_RDWR); // stdin
+        open("/dev/null", O_RDWR);         // stdin
         int _ = dup(0);                    // stdout
             _ = dup(0);                    // stderr
         (void)_;
+        // _ variable to silence the compiler
 
         // Open PID file
         g_pid_fd = open(PID_PATH, O_RDWR | O_CREAT, 0640);
@@ -936,11 +937,6 @@ static void usage(void) {
         printf("| path: " COMPILER_PATH "\n");
         printf("| ver.: " COMPILER_VERSION "\n");
         printf("| flags: " COMPILER_FLAGS "\n\n");
-
-        /* printf("Compiler: " COMPILER_NAME "\n"); */
-        /* printf("Compiler Path: " COMPILER_PATH "\n"); */
-        /* printf("Compiler Version: " COMPILER_VERSION "\n"); */
-        /* printf("Compile Flags: " COMPILER_FLAGS "\n\n"); */
 
         printf("AnimX <walpaper_filepath> [options...]\n");
         printf("Options:\n");
@@ -1073,7 +1069,6 @@ static void daemon_loop(void) {
         unlink(FIFO_PATH);
         if (mkfifo(FIFO_PATH, 0666) < 0) {
                 syslog(LOG_ERR, "Failed to create FIFO %s: %s", FIFO_PATH, strerror(errno));
-                /* exit(0); */
         }
 
         init_thread_specific();
@@ -1206,7 +1201,6 @@ static void copying(void) {
         printf(COPYING6);
         exit(0);
 }
-
 
 int main(int argc, char *argv[]) {
         --argc, ++argv;
