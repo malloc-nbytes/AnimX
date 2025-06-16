@@ -927,6 +927,15 @@ static void stop_daemon(void) {
 }
 
 static void usage(void) {
+
+
+        printf("      _                 _                ____  ____\n");
+        printf("     / \\               (_)              |_  _||_  _|\n");
+        printf("    / _ \\     _ .--.   __   _ .--..--.    \\ \\  / /\n");
+        printf("   / ___ \\   [ `.-. | [  | [ `.-. .-. |    > `' <\n");
+        printf(" _/ /   \\ \\_  | | | |  | |  | | | | | |  _/ /'`\\ \\_\n");
+        printf("|____| |____|[___||__][___][___||__||__]|____||____|\n\n");
+
         printf("AnimX version " VERSION ", Copyright (C) 2025 malloc-nbytes\n");
         printf("AnimX comes with ABSOLUTELY NO WARRANTY.\n");
         printf("This is free software, and you are welcome to redistribute it\n");
