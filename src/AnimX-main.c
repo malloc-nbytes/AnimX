@@ -1206,6 +1206,7 @@ static void copying(void) {
         printf(COPYING4);
         printf(COPYING5);
         printf(COPYING6);
+
         exit(0);
 }
 
