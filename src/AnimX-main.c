@@ -1210,12 +1210,14 @@ static void copying(void) {
 }
 
 int main(int argc, char *argv[]) {
+
         --argc, ++argv;
 
         char **orig_argv = argv;
         int orig_argc = argc;
 
         clap_init(argc, argv);
+
 
         Clap_Arg arg = {0};
         while (clap_next(&arg)) {
